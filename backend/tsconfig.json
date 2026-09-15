@@ -1,0 +1,47 @@
+{
+  // O Motor NÃO compila. Este tsconfig existe só para `npm run typecheck`
+  // (tsc --noEmit): ele lê os .js com as anotações JSDoc e confere se eles
+  // respeitam as interfaces de src/types/zaprun-shop.d.ts.
+  //
+  // Por que não TypeScript de verdade: na máquina do cliente o nssm executa
+  // `node src/server.js` direto, e o updater sincroniza `managedPaths` de
+  // código-fonte. Um passo de build significaria compilar no Windows do
+  // cliente (sem toolchain) ou versionar um `dist/` — que sai de sincronia com
+  // o fonte na primeira release apressada. Tipo checado, zero build.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "types": ["node"],
+
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+
+    // axios e afins publicam `export default`; sem isto o tsc enxerga o
+    // `require('axios')` como namespace e reclama que `.get` não existe — num
+    // código que funciona há meses em produção.
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+
+    // strictNullChecks é o que dá valor aos tipos aqui: quase todo campo da
+    // view é nullable (LEFT JOIN), e é exatamente esse o erro que queremos que
+    // o compilador pegue antes de chegar na máquina do cliente.
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "noImplicitThis": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // Desligados de propósito: o código é CommonJS sem anotação de parâmetro na
+    // maior parte, e exigir `any` explícito só encheria os arquivos de ruído
+    // sem pegar nenhum defeito real.
+    "noImplicitAny": false,
+    "strictPropertyInitialization": false,
+
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*.js", "src/**/*.d.ts"],
+  "exclude": ["node_modules", "src/**/*.test.js"]
+}
