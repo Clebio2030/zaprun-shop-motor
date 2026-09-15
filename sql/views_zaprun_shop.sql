@@ -1,97 +1,127 @@
 /* =============================================================================
-   ZapRun Shop — view do catálogo no ERP (Firebird)
+   ZapRun Shop — view do catálogo no ERP (Firebird / miautomec)
 
-   Aplicada AUTOMATICAMENTE pelo Motor a cada boot do serviço, comando a
-   comando. Por isso, o dia em que este arquivo tiver DDL, ela precisa ser
-   sempre CREATE OR ALTER VIEW, nunca CREATE VIEW.
+   Aplicada AUTOMATICAMENTE pelo Motor a cada boot do serviço
+   (backend/src/motor/migrations.js). Por isso é sempre CREATE OR ALTER VIEW,
+   nunca CREATE VIEW — e por isso mudar a view é uma release, não um acesso
+   remoto a 100 máquinas.
 
-   ⚠️  ESTE ARQUIVO ESTÁ SEM DDL DE PROPÓSITO.
+   ── UMA MUDANÇA EM RELAÇÃO À VERSÃO ESCRITA NO CLIENTE ──────────────────────
 
-   A view ZAPRUN_SHOP já existe no ERP do cliente, escrita fora daqui. Um
-   CREATE OR ALTER chutado a partir de nomes de tabela que não conferimos
-   SUBSTITUIRIA a view boa por uma quebrada no primeiro boot — e o catálogo
-   inteiro sumiria da loja. Sem comandos executáveis, migrations.js registra
-   "arquivo-vazio" em GET /status e não toca em nada.
+   Toda coluna de TEXTO ganhou `CAST(... AS VARCHAR(n) CHARACTER SET OCTETS)`.
+   A versão original não tinha nenhum, e isso PERDE ACENTUAÇÃO de forma
+   irreversível:
 
-   Para passar a versionar a view aqui:
-     1. Leia o schema real: GET http://127.0.0.1:3002/diagnostico/colunas
-        ?tabelas=PRODUTO,CODBARRA,PRECO,DEPOSITO,ESTOQUE,GRUPO
-        (o Firebird recusa a criação inteira no PRIMEIRO nome errado — e cada
-        nome errado custa uma ida e volta com alguém na frente da máquina)
-     2. Escreva o CREATE OR ALTER respeitando o contrato abaixo
-     3. Confira com GET /produtos?cdproduto=<um produto conhecido>
+     as colunas TEXT deste ERP são CHARACTER SET NONE contendo bytes WIN1252
+     (0xE3 = ã, 0xE9 = é). O node-firebird decodifica campos NONE como UTF-8,
+     então cada byte acentuado vira U+FFFD na LEITURA — e nenhum conserto
+     posterior o recupera, porque o byte original já não existe mais.
+     "CAFÉ EM PÓ" chega como "CAF? EM P?" e vai assim para a vitrine.
 
-   ── CONTRATO: o que o Motor espera da view ───────────────────────────────────
+   Com OCTETS o driver devolve os bytes crus num Buffer, e
+   backend/src/motor/encoding.js decodifica WIN1252 corretamente. É o mesmo
+   tratamento que a view ZAPRUN_ORCAMENTOS usa (21 CASTs), no mesmo banco, e
+   que a documentação de lá registra como "caro de acertar e fácil de regredir".
 
-   A view é PLANA. Ela devolve VÁRIAS linhas por produto — o produto cartesiano
-   de códigos de barra × tabelas de preço × depósitos — e quem reduz isso a um
-   objeto por produto é backend/src/motor/mapping.js. A view não precisa
-   agrupar, deduplicar nem ordenar nada além de CDPRODUTO.
+   ⚠️  OS TAMANHOS DOS CASTs SÃO GENEROSOS, NÃO CONFERIDOS.
+   Um CAST MENOR que o dado não trunca em silêncio: derruba a leitura inteira
+   com "string right truncation", e o ciclo não entrega nada. Um CAST MAIOR é
+   sempre seguro. Por isso os valores abaixo são folgados. Para fixá-los nos
+   tamanhos reais, leia o catálogo do ERP na máquina do cliente:
 
-   | Coluna              | Tipo    | Obrigatória | Observação                      |
-   |---------------------|---------|-------------|---------------------------------|
-   | CDPRODUTO           | INTEGER | SIM         | identidade; linha sem ele é descartada |
-   | PRODUTO_DESCRICAO   | TEXTO   | não         | nome no catálogo                |
-   | GRUPO               | TEXTO   | não         | vira categoria no Shop          |
-   | CODBARRA            | TEXTO   | não         | 1:N — ver nota abaixo           |
-   | IDPRECO             | INTEGER | não         | 1:N — chave da tabela de preço  |
-   | TABELA_PRECO        | TEXTO   | não         | 1:N — "CARTAO", "DINHEIRO"...   |
-   | PRECO               | NUMERIC | não         | 1:N — sem ele, o preço é ignorado |
-   | CDDEPOSITO          | INTEGER | não         | 1:N — chave do depósito         |
-   | DEPOSITO_DESCRICAO  | TEXTO   | não         | 1:N                             |
-   | SALDO               | NUMERIC | não         | 1:N — zero é dado válido        |
-   | IDEMPRESA           | INTEGER | não         | só em ERP multiempresa          |
+     GET http://127.0.0.1:3002/diagnostico/colunas?tabelas=PRODUTO,PRODUTO_CODBARRA,PRODUTOPRECO,TABELAPRECO,DEPOSITO,MOVIMENTO
 
-   Regras que não são negociáveis:
+   Confira o resultado com:
 
-   • LEFT JOIN em tudo.
-     Com INNER JOIN, produto sem código de barras — ou sem preço cadastrado —
-     desaparece por completo do catálogo, em silêncio.
+     GET http://127.0.0.1:3002/produtos?cdproduto=<um produto com acento no nome>
 
-   • Toda coluna de TEXTO sai com CHARACTER SET OCTETS:
-         CAST(p.DESCRICAO AS VARCHAR(150) CHARACTER SET OCTETS)
-     Sem isso, o node-firebird decodifica bytes WIN1252 como UTF-8 e todo
-     acento vira U+FFFD — perda IRREVERSÍVEL na leitura. Ver motor/encoding.js.
+   ── OUTRAS TRÊS COISAS QUE VALE SABER ───────────────────────────────────────
 
-   • O CAST usa o tamanho DECLARADO da coluna.
-     Um CAST menor que o dado não trunca em silêncio: derruba a leitura inteira
-     com "string right truncation", e o ciclo não entrega nada.
+   1. NÃO descomente o `HAVING SUM(m.qtdeatual) > 0`.
+      A "dica de ouro" do original mandaria só depósitos com saldo positivo. Para
+      o Shop isso é um defeito: saldo 0 é justamente o que marca o produto como
+      ESGOTADO na vitrine. Com o HAVING ligado, o produto que zera some da lista
+      de depósitos e o Shop não consegue distinguir "acabou" de "nunca soube" —
+      ele continuaria anunciando o último saldo conhecido.
 
-   • CODBARRA é TEXTO, nunca número.
-     EAN/GTIN admite zero à esquerda ("0001234567890") e um GTIN-14 chega perto
-     do limite de inteiro seguro do JavaScript. Como número, o zero some e o
-     código pode ser arredondado — e um produto com código errado é um produto
-     que o leitor do caixa nunca acha.
+   2. `WHERE p.inativo = 0` esconde o produto inativado no ERP.
+      O sync é upsert SEM exclusão: produto que some da view CONTINUA no catálogo
+      do Shop, à venda. Desativar a partir da ausência é possível (o payload é o
+      catálogo inteiro), mas só é seguro quando a entrega fecha com
+      received == expectedTotal — desativar a partir de uma entrega truncada
+      esvaziaria a loja do cliente por causa de um timeout de rede. Ver
+      docs/03-contrato-api.md.
 
-   • IDEMPRESA entra em TODOS os JOINs, quando o ERP é multiempresa.
-     Juntar preço ou saldo só por CDPRODUTO faz o estoque da empresa 1 aparecer
-     no produto da empresa 2. Foi assim que o Motor de Orçamentos errou os itens
-     antes de incluir IDEMPRESA no JOIN de ORCPROD.
+   3. A subconsulta de estoque agrega MOVIMENTO inteiro, a cada ciclo.
+      `movimento` costuma ser a maior tabela do ERP, e o SUM/GROUP BY varre tudo
+      de hora em hora. Se o ciclo começar a demorar, é aqui que se olha primeiro
+      (FB_QUERY_TIMEOUT está em 300s). `_meta.linhas` em GET /produtos mede o
+      tamanho do resultado.
 
-   ── Esqueleto (ajuste os nomes ao ERP antes de descomentar) ──────────────────
+   ── O CONTRATO ──────────────────────────────────────────────────────────────
 
-   CREATE OR ALTER VIEW ZAPRUN_SHOP (
-       CDPRODUTO, PRODUTO_DESCRICAO, GRUPO,
-       CODBARRA,
-       IDPRECO, TABELA_PRECO, PRECO,
-       CDDEPOSITO, DEPOSITO_DESCRICAO, SALDO
-   ) AS
-   SELECT
-       p.CDPRODUTO,
-       CAST(p.DESCRICAO AS VARCHAR(150) CHARACTER SET OCTETS),
-       CAST(g.DESCRICAO AS VARCHAR(60)  CHARACTER SET OCTETS),
-       CAST(b.CODBARRA  AS VARCHAR(20)  CHARACTER SET OCTETS),
-       t.IDPRECO,
-       CAST(t.DESCRICAO AS VARCHAR(40)  CHARACTER SET OCTETS),
-       t.VLVENDA,
-       d.CDDEPOSITO,
-       CAST(d.DESCRICAO AS VARCHAR(60)  CHARACTER SET OCTETS),
-       e.SALDO
-   FROM PRODUTO p
-   LEFT JOIN GRUPO    g ON g.CDGRUPO    = p.CDGRUPO
-   LEFT JOIN CODBARRA b ON b.CDPRODUTO  = p.CDPRODUTO
-   LEFT JOIN PRECO    t ON t.CDPRODUTO  = p.CDPRODUTO
-   LEFT JOIN ESTOQUE  e ON e.CDPRODUTO  = p.CDPRODUTO
-   LEFT JOIN DEPOSITO d ON d.CDDEPOSITO = e.CDDEPOSITO;
+   A view é PLANA e devolve o produto cartesiano dos LEFT JOINs:
+   códigos de barra × tabelas de preço × depósitos. Um produto com 2 códigos,
+   3 tabelas e 4 depósitos ocupa 24 linhas. Quem reduz isso a um objeto por
+   produto — deduplicando cada dimensão pela sua chave — é
+   backend/src/motor/mapping.js. A view não precisa agrupar nada.
 
+   Sem IDEMPRESA: este ERP é de empresa única. O Motor trata a ausência da
+   coluna como empresa 0 e segue normalmente.
    ============================================================================= */
+
+CREATE OR ALTER VIEW ZAPRUN_SHOP(
+    CDPRODUTO,
+    PRODUTO_DESCRICAO,
+    GRUPO,
+    CODBARRA,
+    IDPRECO,
+    TABELA_PRECO,
+    PRECO,
+    CDDEPOSITO,
+    DEPOSITO_DESCRICAO,
+    SALDO)
+AS
+SELECT
+    p.cdproduto,
+    CAST(p.produto  AS VARCHAR(500) CHARACTER SET OCTETS),
+    CAST(p.grupo    AS VARCHAR(255) CHARACTER SET OCTETS),
+    CAST(pcb.codbarra AS VARCHAR(100) CHARACTER SET OCTETS),
+    pp.idpreco,
+    CAST(tp.descricao AS VARCHAR(255) CHARACTER SET OCTETS),
+    pp.preco,
+    est.cddeposito,
+    CAST(est.deposito_descricao AS VARCHAR(255) CHARACTER SET OCTETS),
+    COALESCE(est.saldo, 0)
+FROM produto p
+
+/* 1. Códigos de barra (1:N) */
+LEFT JOIN produto_codbarra pcb ON pcb.cdproduto = p.cdproduto
+
+/* 2. Preços e tabelas (1:N) */
+LEFT JOIN produtopreco pp ON pp.cdproduto = p.cdproduto
+LEFT JOIN tabelapreco  tp ON tp.idpreco   = pp.idpreco
+
+/* 3. Estoque consolidado por depósito (1:N)
+
+   O INNER JOIN com deposito corta movimentação sem depósito correspondente, e
+   os filtros descartam depósito de defeito, inativo, ou com nome vazio — que
+   apareceriam na vitrine como um depósito sem nome. */
+LEFT JOIN (
+    SELECT
+        m.cdproduto,
+        m.cddeposito,
+        d.deposito AS deposito_descricao,
+        SUM(m.qtdeatual) AS saldo
+    FROM movimento m
+    INNER JOIN deposito d ON d.cddeposito = m.cddeposito
+    WHERE d.defeito = 0
+      AND d.inativo = 0
+      AND d.deposito IS NOT NULL
+      AND TRIM(d.deposito) <> ''
+    GROUP BY m.cdproduto, m.cddeposito, d.deposito
+    /* NÃO ligue um HAVING SUM(m.qtdeatual) > 0 aqui — ver a nota 1 no topo:
+       saldo 0 é o que marca "esgotado" no Shop. */
+) est ON est.cdproduto = p.cdproduto
+
+WHERE p.inativo = 0;

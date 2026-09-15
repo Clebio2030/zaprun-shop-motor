@@ -12,8 +12,9 @@ original. Os princípios abaixo vieram de lá e foram pagos caro — não os rei
 
 1. **[README.md](README.md)** — o produto cartesiano da view e por que ele é o
    problema central deste Motor.
-2. **[sql/views_zaprun_shop.sql](sql/views_zaprun_shop.sql)** — o contrato da
-   view. É o cabeçalho do arquivo, não o SQL, que importa.
+2. **[sql/views_zaprun_shop.sql](sql/views_zaprun_shop.sql)** — a view do ERP, e
+   o cabeçalho que explica a única mudança feita nela (os CASTs OCTETS) e os
+   três riscos que sobraram.
 3. **[backend/src/types/zaprun-shop.d.ts](backend/src/types/zaprun-shop.d.ts)** —
    o contrato em tipos.
 
@@ -72,7 +73,9 @@ empresa 1, mas a view só tem [3]".
 | Aumentar `chunkSize` sem medir | 413 — o ZapRun tem `bodyParser.json({limit:'5mb'})` **global**, antes das rotas |
 | Coluna de texto sem `CHARACTER SET OCTETS` na view | Acentuação perdida **irreversivelmente** na leitura |
 | Incluir `raw` no hash | Todo ciclo parece alteração (colunas voláteis do ERP) |
-| Escrever DDL em `views_zaprun_shop.sql` sem ler o schema real | `CREATE OR ALTER` substitui a view boa do cliente por um chute, no primeiro boot |
+| Mexer em `views_zaprun_shop.sql` sem ler o schema real | `CREATE OR ALTER` roda a cada boot e substitui a view do cliente — um nome de coluna errado a derruba inteira |
+| `CAST(... AS VARCHAR(n))` menor que a coluna real | não trunca: derruba a leitura com "string right truncation" e o ciclo não entrega nada. Maior é sempre seguro |
+| Ligar o `HAVING SUM(qtdeatual) > 0` na subconsulta de estoque | o produto que zera some da lista de depósitos, e o Shop deixa de distinguir "esgotado" de "sem informação" |
 
 ## Release
 

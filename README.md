@@ -77,7 +77,7 @@ backend/src/
     sender.js            handshake, POST, retry, fatiamento por bytes
     syncState.js         hash do catálogo por empresa
     migrations.js        aplica sql/views_zaprun_shop.sql no boot
-sql/views_zaprun_shop.sql  ⟵ o contrato da view (sem DDL, ver o arquivo)
+sql/views_zaprun_shop.sql  ⟵ a view do ERP, aplicada no boot pelo migrations.js
 updater/                 atualização automática via release do GitHub
 nssm/                    empacota o Node como serviço do Windows
 INSTALAR.bat             instalador (rodar como Administrador)
@@ -154,12 +154,27 @@ cd backend && npm run typecheck
 
 ## Estado atual
 
-O Motor está **completo e testado** (41 testes, typecheck limpo), e depende de
-duas coisas para entrar em produção:
+O Motor está **completo e testado** (41 testes, typecheck limpo).
 
-1. **A view `ZAPRUN_SHOP` no ERP do cliente.** `sql/views_zaprun_shop.sql` está
-   sem DDL de propósito — ele documenta o contrato mas não aplica nada, para não
-   substituir por um chute a view que já existe. Ver o cabeçalho do arquivo.
-2. **O endpoint `POST /erp/produtos/sync` no servidor**, que recebe o payload e
-   grava em `StoreProduct`. Ainda não existe: hoje o Motor extrai, agrupa e
-   entrega corretamente, e o POST volta 404. O `GET /erp/handshake` já responde.
+A view `ZAPRUN_SHOP` está em `sql/views_zaprun_shop.sql` e é aplicada no boot do
+serviço. Ela é a view escrita no cliente, com **uma** mudança: todo texto agora
+sai com `CHARACTER SET OCTETS`. Sem isso a acentuação se perde de forma
+irreversível na leitura — "CAFÉ EM PÓ" chega "CAF? EM P?". Os tamanhos dos CASTs
+são generosos e ainda **não foram conferidos** contra o schema real; o cabeçalho
+do arquivo diz como fixá-los.
+
+O endpoint `POST /erp/produtos/sync` **existe no código do servidor** (repo
+`zaprun`, `backend/src/modules/erp/`), com migration e serviço de ingestão, mas
+ainda **não está no ar**: falta rodar a migration e reiniciar o backend. Até lá o
+POST volta 404 e o Motor loga a falha sem perder nada — o hash não é gravado e o
+ciclo seguinte reenvia.
+
+O que o servidor ainda ACHATA (o Motor já entrega tudo):
+
+| | Motor entrega | Servidor guarda |
+|---|---|---|
+| Preços | todas as tabelas | um (`ErpSettings.shopIdPreco`) |
+| Estoque | saldo por depósito | um número (a soma) |
+| Código de barras | todos | o primeiro |
+
+Guardar os três em tabelas filhas está desenhado mas não implementado.
