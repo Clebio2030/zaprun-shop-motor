@@ -77,7 +77,7 @@ empresa 1, mas a view só tem [3]".
 ## Release
 
 Código chega na frota por **release no GitHub**
-(`Clebio2030/zaprun-motor-zaprunshop`, `releases/latest`); os clientes puxam
+(`Clebio2030/zaprun-shop-motor`, `releases/latest`); os clientes puxam
 pelo updater. O repo é **outro** que o dos Orçamentos, de propósito: release do
 Shop não pode virar update do Motor de Orçamentos.
 

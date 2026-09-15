@@ -1,5 +1,5 @@
 {
-  "name": "zaprun-motor-zaprunshop",
+  "name": "zaprun-shop-motor",
   "version": "1.0.0",
   "description": "Motor ZapRun Shop — lê o catálogo de produtos do ERP (Firebird) na máquina do cliente e entrega no catálogo do ZapRun Shop",
   "main": "src/server.js",

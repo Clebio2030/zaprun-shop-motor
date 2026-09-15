@@ -42,7 +42,7 @@ git push origin v1.0.1
 ### 3. Publicar a Release
 
 **Pelo navegador:**
-`https://github.com/Clebio2030/zaprun-motor-zaprunshop/releases/new?tag=v1.0.1`
+`https://github.com/Clebio2030/zaprun-shop-motor/releases/new?tag=v1.0.1`
 → Title `v1.0.1` → notas → **Publish release**.
 
 Não precisa anexar `.zip`: sem asset, o updater usa o zipball da tag. Se anexar
@@ -73,7 +73,7 @@ servido pelo nginx direto do disco. Esse arquivo **não se atualiza sozinho**.
 Depois de publicar uma release, rode no servidor:
 
 ```bash
-cd /home/deploy/zaprun-motor-zaprunshop
+cd /home/deploy/zaprun-shop-motor
 node tools/empacotar.js
 ```
 

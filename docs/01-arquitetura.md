@@ -126,7 +126,7 @@ Se um acento sair errado, o problema é a **view** (faltou o `CAST`), não o có
 
 Tarefa agendada do Windows, 08:00 e 19:00:
 
-1. consulta `releases/latest` de `Clebio2030/zaprun-motor-zaprunshop`
+1. consulta `releases/latest` de `Clebio2030/zaprun-shop-motor`
 2. compara com `updater/version.json`
 3. se houver versão nova: baixa, faz backup, para o serviço, troca os arquivos
    de `managedPaths`, sobe o serviço, chama `/health`

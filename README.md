@@ -126,7 +126,7 @@ As duas instalações vivem na mesma máquina. O que **precisa** ser diferente:
 |---|---|---|
 | Porta | 3001 | **3002** |
 | Serviço Windows | `ZapRunOrcamentos` | **`ZapRunShop`** |
-| Repo de release | `zaprun-motor-orcamentos` | **`zaprun-motor-zaprunshop`** |
+| Repo de release | `zaprun-motor-orcamentos` | **`zaprun-shop-motor`** |
 | `backupDir`/`tempDir` | `c:/ZapRun/Orcamentos/…` | **`c:/ZapRun/Shop/…`** |
 | View | `ZAPRUN_ORCAMENTOS` | **`ZAPRUN_SHOP`** |
 | Endpoint | `/erp/orcamentos/sync` | **`/erp/produtos/sync`** |
