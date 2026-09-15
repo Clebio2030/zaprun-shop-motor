@@ -211,9 +211,21 @@ async function enviarEmpresa({ erpCompanyId, produtos, chunkSize, meta }) {
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
+// Para qual Motor o token precisa ter sido emitido. O servidor recusa com 403
+// um token de outro escopo — aqui só conferimos para AVISAR cedo, no handshake,
+// em vez de o implantador descobrir pelo primeiro envio que falha horas depois.
+const ESCOPO_ESPERADO = 'shop';
+
 /** Handshake com fallback nos defaults do código. Nunca lança. */
 async function resolverConfig() {
   const remoto = await handshake();
+
+  if (remoto && remoto.escopo && remoto.escopo !== ESCOPO_ESPERADO) {
+    logError(
+      `[ZapRun] TOKEN ERRADO: este é o Motor do Shop, mas o ZAPRUN_TOKEN do backend/.env foi emitido para "${remoto.escopo}". ` +
+        'Gere um token em Loja > Motor do ERP no painel do ZapRun e troque o ZAPRUN_TOKEN. O envio vai falhar com 403 até lá.'
+    );
+  }
 
   if (!remoto) {
     // Servidor fora do ar não pode parar o Motor: ele segue com os defaults e
