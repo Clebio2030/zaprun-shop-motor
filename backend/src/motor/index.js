@@ -4,9 +4,10 @@
 // Ciclo:
 //   1. GET /erp/handshake        → confirma o token e recebe a config de frota
 //   2. Lê a view ZAPRUN_SHOP do Firebird e agrupa em produtos
-//   3. Separa por empresa e pula quem não mudou (hash)
+//   3. Separa por empresa e compara o hash de CADA produto com o do último
+//      envio confirmado — manda só os que mudaram
 //   4. POST /erp/produtos/sync em lotes ordenados, com fail-fast
-//   5. Só grava o hash depois que a API CONFIRMA a contagem entregue
+//   5. Só grava o estado depois que a API CONFIRMA a contagem entregue
 //
 // Regra de ouro herdada do Motor de Orçamentos e mantida: NUNCA confie só no
 // 200. O hash é o carimbo de "chegou inteiro"; gravá-lo cedo demais faz o Motor
@@ -14,8 +15,13 @@
 //
 // Diferença de desenho em relação ao Motor de Orçamentos: aqui NÃO há janela de
 // datas. Catálogo não tem data de emissão — um preço muda sem que nenhuma
-// coluna de data mude — então o ciclo lê o catálogo inteiro e deixa o hash
-// decidir se vale enviar. Ver extractor.extrairProdutos.
+// coluna de data mude — então o ciclo LÊ o catálogo inteiro toda vez.
+//
+// Ler tudo não é o mesmo que ENVIAR tudo: o estado local guarda um hash por
+// produto, e o envio leva só os que mudaram. Num cliente de 10 mil produtos,
+// uma alteração de preço vira um POST com um produto em vez de dez mil. O
+// catálogo completo vai uma vez por dia (fullACadaHoras) para reconciliar o que
+// o incremental não enxerga — produto que sumiu do ERP, estado local defasado.
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
@@ -24,7 +30,12 @@ const crypto = require('crypto');
 const { logInfo, logWarn, logError } = require('../logger');
 const { handshake, enviarProdutos, fatiarLote } = require('./sender');
 const { extrairProdutos, listarEmpresasDoErp } = require('./extractor');
-const { checkStateChanged, getLastSyncedAt, updateState } = require('./syncState');
+const {
+  checkStateChanged,
+  updateState,
+  diffCatalogo,
+  precisaFull
+} = require('./syncState');
 const { runDatabaseMigrations } = require('./migrations');
 
 /** @typedef {import('../types/zaprun-shop').ProdutoCatalogo} ProdutoCatalogo */
@@ -40,7 +51,12 @@ const EMPRESA_UNICA = 0;
 // e por isso nunca propagaria uma mudança para a frota.
 const PADRAO = {
   cronExpr: '0 8-22 * * *', // de hora em hora, das 08h às 22h
-  chunkSize: 500            // cabe folgado no bodyParser de 5 MB do ZapRun
+  chunkSize: 500,           // cabe folgado no bodyParser de 5 MB do ZapRun
+  // De quanto em quanto tempo mandar o catálogo COMPLETO em vez de só o que
+  // mudou. O incremental é o caminho normal; o full reconcilia o que ele não
+  // enxerga (produto que sumiu do ERP, estado local defasado). Uma vez por dia
+  // é barato — e não tê-lo é caro no dia em que o estado local mentir.
+  fullACadaHoras: 24
 };
 
 let cicloEmAndamento = false;
@@ -88,10 +104,20 @@ async function runMotor() {
     resumo.empresas = porEmpresa.size;
 
     for (const [erpCompanyId, lista] of porEmpresa) {
-      const modo = getLastSyncedAt(erpCompanyId) ? 'incremental' : 'full';
-
+      // Atalho barato: se o catálogo inteiro tem o mesmo hash do último envio
+      // confirmado, nada mudou e nem vale comparar produto a produto.
       const { changed, hash } = checkStateChanged(erpCompanyId, lista);
-      if (!changed) {
+
+      const { mudados, hashes, sumidos, primeiraVez } = diffCatalogo(erpCompanyId, lista);
+
+      // Full quando é a primeira carga, quando o último full passou da validade,
+      // ou quando o estado local não tem hash por produto (versão antiga do
+      // Motor). Fora isso, incremental.
+      const full = primeiraVez || precisaFull(erpCompanyId, config.fullACadaHoras);
+      const aEnviar = full ? lista : mudados;
+      const modo = full ? 'full' : 'incremental';
+
+      if (!full && !changed && aEnviar.length === 0) {
         logInfo(
           `[ZapRun] Empresa ${erpCompanyId}: ${lista.length} produto(s), nada mudou. Pulando envio.`
         );
@@ -99,22 +125,46 @@ async function runMotor() {
         continue;
       }
 
-      logInfo(`[ZapRun] Empresa ${erpCompanyId}: enviando ${lista.length} produto(s) — modo ${modo}.`);
+      // Produto que o ERP parou de mandar. O incremental não comunica isso —
+      // aparece no log para alguém decidir, e o full periódico é o que dá ao
+      // servidor a lista completa para reconciliar.
+      if (sumidos.length > 0) {
+        logWarn(
+          `[ZapRun] Empresa ${erpCompanyId}: ${sumidos.length} produto(s) sumiram da view (inativados no ERP?): ${sumidos.slice(0, 10).join(', ')}`
+        );
+      }
+
+      if (full) {
+        logInfo(
+          `[ZapRun] Empresa ${erpCompanyId}: enviando o catálogo COMPLETO — ${lista.length} produto(s). ` +
+            (primeiraVez ? 'Primeira carga.' : `Reconciliação periódica (a cada ${config.fullACadaHoras}h).`)
+        );
+      } else {
+        logInfo(
+          `[ZapRun] Empresa ${erpCompanyId}: enviando ${aEnviar.length} de ${lista.length} produto(s) — só o que mudou.`
+        );
+      }
 
       const ok = await enviarEmpresa({
         erpCompanyId,
-        produtos: lista,
+        produtos: aEnviar,
         chunkSize: config.chunkSize,
         meta: { dataReferencia, syncMode: modo }
       });
 
       if (ok) {
-        updateState(erpCompanyId, hash);
+        // Os hashes do catálogo INTEIRO, não só dos enviados: os que não mudaram
+        // já estavam corretos no servidor, e regravá-los mantém o estado fiel ao
+        // que existe lá. Salvar só os enviados faria o ciclo seguinte achar que
+        // todo o resto mudou.
+        updateState(erpCompanyId, hash, hashes, full);
         resumo.enviados++;
-        logInfo(`[ZapRun] Empresa ${erpCompanyId}: entrega confirmada — hash salvo.`);
+        logInfo(`[ZapRun] Empresa ${erpCompanyId}: entrega confirmada — estado salvo.`);
       } else {
         resumo.falhas++;
-        logWarn(`[ZapRun] Empresa ${erpCompanyId}: hash NÃO salvo. O próximo ciclo reenviará tudo.`);
+        logWarn(
+          `[ZapRun] Empresa ${erpCompanyId}: estado NÃO salvo. O próximo ciclo reenviará o que faltou.`
+        );
       }
     }
   } catch (err) {
@@ -240,6 +290,7 @@ async function resolverConfig() {
     ativo: remoto.ativo !== false,
     cronExpr: remoto.cronExprShop || remoto.cronExpr || PADRAO.cronExpr,
     chunkSize: Number(remoto.chunkSizeShop || remoto.chunkSize) || PADRAO.chunkSize,
+    fullACadaHoras: Number(remoto.fullACadaHoras) || PADRAO.fullACadaHoras,
     erpCompanyIds: remoto.erpCompanyIds || null,
     empresa: remoto.empresa || null
   };

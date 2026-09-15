@@ -18,6 +18,9 @@ const {
   checkStateChanged,
   updateState,
   getLastSyncedAt,
+  hashProduto,
+  diffCatalogo,
+  precisaFull,
   STATE_FILE_PATH
 } = require('./syncState');
 
@@ -135,4 +138,136 @@ test('arquivo de estado corrompido é tratado como vazio, sem derrubar o serviç
   assert.strictEqual(getLastSyncedAt(1), null);
   assert.strictEqual(checkStateChanged(1, [produto()]).changed, true);
   limparEstado();
+});
+
+// ── Envio incremental ────────────────────────────────────────────────────────
+//
+// É a diferença entre 10 mil linhas escritas por hora e as três que realmente
+// mudaram. Se estes testes falharem, o Motor voltou a mandar o catálogo inteiro
+// — funciona, mas não escala.
+
+test('primeira vez: tudo é novidade', () => {
+  limparEstado();
+  const catalogo = [produto({ cdproduto: 1 }), produto({ cdproduto: 2 })];
+
+  const d = diffCatalogo(1, catalogo);
+  assert.strictEqual(d.primeiraVez, true);
+  assert.strictEqual(d.mudados.length, 2);
+  assert.deepStrictEqual(d.sumidos, []);
+});
+
+test('segundo ciclo sem alteração: não manda nada', () => {
+  limparEstado();
+  const catalogo = [produto({ cdproduto: 1 }), produto({ cdproduto: 2 })];
+
+  const primeiro = diffCatalogo(1, catalogo);
+  updateState(1, generateHash(catalogo), primeiro.hashes, true);
+
+  const segundo = diffCatalogo(1, catalogo);
+  assert.strictEqual(segundo.primeiraVez, false);
+  assert.strictEqual(segundo.mudados.length, 0);
+});
+
+test('só o produto alterado entra no envio', () => {
+  limparEstado();
+  const antes = [produto({ cdproduto: 1 }), produto({ cdproduto: 2 }), produto({ cdproduto: 3 })];
+  const d1 = diffCatalogo(1, antes);
+  updateState(1, generateHash(antes), d1.hashes, true);
+
+  // Só o produto 2 muda de preço.
+  const depois = [
+    produto({ cdproduto: 1 }),
+    produto({ cdproduto: 2, precos: [{ idpreco: 1, tabela: 'CARTAO', preco: 99.9 }] }),
+    produto({ cdproduto: 3 })
+  ];
+
+  const d2 = diffCatalogo(1, depois);
+  assert.strictEqual(d2.mudados.length, 1);
+  assert.strictEqual(d2.mudados[0].cdproduto, 2);
+});
+
+test('produto novo no ERP entra sozinho, sem arrastar os outros', () => {
+  limparEstado();
+  const antes = [produto({ cdproduto: 1 })];
+  const d1 = diffCatalogo(1, antes);
+  updateState(1, generateHash(antes), d1.hashes, true);
+
+  const d2 = diffCatalogo(1, [produto({ cdproduto: 1 }), produto({ cdproduto: 9 })]);
+  assert.strictEqual(d2.mudados.length, 1);
+  assert.strictEqual(d2.mudados[0].cdproduto, 9);
+});
+
+test('produto que some do ERP é reportado, não enviado', () => {
+  limparEstado();
+  const antes = [produto({ cdproduto: 1 }), produto({ cdproduto: 2 })];
+  const d1 = diffCatalogo(1, antes);
+  updateState(1, generateHash(antes), d1.hashes, true);
+
+  const d2 = diffCatalogo(1, [produto({ cdproduto: 1 })]);
+  assert.deepStrictEqual(d2.sumidos, ['2']);
+  assert.strictEqual(d2.mudados.length, 0);
+});
+
+test('a ordem dos arrays 1:N não faz o produto parecer alterado', () => {
+  // Mesmo motivo do hash do catálogo: a view só ordena por CDPRODUTO. Sem
+  // ordenar aqui, TODO produto pareceria mudado a cada ciclo e o incremental
+  // não economizaria nada.
+  const a = produto({
+    precos: [
+      { idpreco: 1, tabela: 'CARTAO', preco: 44.99 },
+      { idpreco: 2, tabela: 'DINHEIRO', preco: 39.9 }
+    ]
+  });
+  const b = produto({
+    precos: [
+      { idpreco: 2, tabela: 'DINHEIRO', preco: 39.9 },
+      { idpreco: 1, tabela: 'CARTAO', preco: 44.99 }
+    ]
+  });
+  assert.strictEqual(hashProduto(a), hashProduto(b));
+});
+
+test('estado no formato ANTIGO (sem hash por produto) força um full', () => {
+  // Motor atualizado sobre um sync_state.json da versão anterior: não há hash
+  // por produto para comparar, e mandar tudo uma vez é mais barato que arriscar
+  // não mandar o que mudou.
+  limparEstado();
+  fs.writeFileSync(
+    STATE_FILE_PATH,
+    JSON.stringify({ 1: { hash: 'abc', lastSyncedAt: '2026-09-15T00:00:00.000Z' } }),
+    'utf8'
+  );
+
+  const d = diffCatalogo(1, [produto({ cdproduto: 1 })]);
+  assert.strictEqual(d.primeiraVez, true);
+  assert.strictEqual(d.mudados.length, 1);
+  limparEstado();
+});
+
+test('precisaFull: sem full anterior sempre pede full', () => {
+  limparEstado();
+  assert.strictEqual(precisaFull(1, 24), true);
+});
+
+test('precisaFull: full recente dispensa, full velho exige', () => {
+  limparEstado();
+  const catalogo = [produto()];
+  const d = diffCatalogo(1, catalogo);
+  updateState(1, generateHash(catalogo), d.hashes, true);
+
+  assert.strictEqual(precisaFull(1, 24), false);
+  // Janela de zero hora: qualquer full já passou da validade.
+  assert.strictEqual(precisaFull(1, 0), true);
+});
+
+test('envio incremental NÃO carimba lastFullAt', () => {
+  // Se carimbasse, a reconciliação diária nunca aconteceria — o incremental
+  // empurraria o prazo para sempre e o ponto cego (produto que sumiu) ficaria
+  // permanente.
+  limparEstado();
+  const catalogo = [produto()];
+  const d = diffCatalogo(1, catalogo);
+
+  updateState(1, generateHash(catalogo), d.hashes, false);
+  assert.strictEqual(precisaFull(1, 24), true);
 });
