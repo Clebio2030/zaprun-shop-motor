@@ -137,7 +137,7 @@ set "FB_DATABASE_IN="
 set /p FB_DATABASE_IN="FB_DATABASE (caminho do banco, o mesmo do Start.in) [Enter para manter]: "
 
 echo.
-echo O TOKEN e gerado no painel do ZapRun, em Integracoes ^> ERP.
+echo O TOKEN e gerado no painel do ZapRun, em Loja ^> Integracao ERP.
 echo Ele comeca com "zrerp_" e diz de qual empresa e o catalogo.
 echo.
 set "ZAPRUN_TOKEN_IN="
