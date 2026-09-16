@@ -50,7 +50,17 @@ const EMPRESA_UNICA = 0;
 // DEFAULTS NO CÓDIGO de propósito — nunca no `.env`, que é preservado no update
 // e por isso nunca propagaria uma mudança para a frota.
 const PADRAO = {
-  cronExpr: '0 8-22 * * *', // de hora em hora, das 08h às 22h
+  // A cada 30 minutos, das 08h às 22h.
+  //
+  // Mais apertado que o Motor de Orçamentos (que roda de hora em hora) porque
+  // ESTOQUE muda a cada venda: de hora em hora, o "esgotado" da vitrine chega
+  // até 60 minutos atrasado, e quem paga isso é o cliente final que compra o
+  // que já acabou. Preço e descrição não precisariam disso — o estoque precisa.
+  //
+  // Este valor é só o FALLBACK de quando não se consegue falar com o servidor.
+  // O ritmo real vem do handshake (`cronExprShop`), ajustável por empresa em
+  // ErpSettings.shopCronExpr, sem release e sem tocar nesta máquina.
+  cronExpr: '*/30 8-22 * * *',
   chunkSize: 500,           // cabe folgado no bodyParser de 5 MB do ZapRun
   // De quanto em quanto tempo mandar o catálogo COMPLETO em vez de só o que
   // mudou. O incremental é o caminho normal; o full reconcilia o que ele não
