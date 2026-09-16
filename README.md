@@ -124,7 +124,7 @@ As duas instalações vivem na mesma máquina. O que **precisa** ser diferente:
 
 | | Orçamentos | Shop |
 |---|---|---|
-| Porta | 3001 | **3010** |
+| Porta | 3020 | **3010** |
 | Serviço Windows | `ZapRunOrcamentos` | **`ZapRunShop`** |
 | Repo de release | `zaprun-motor-orcamentos` | **`zaprun-shop-motor`** |
 | `backupDir`/`tempDir` | `c:/ZapRun/Orcamentos/…` | **`c:/ZapRun/Shop/…`** |

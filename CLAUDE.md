@@ -68,7 +68,7 @@ empresa 1, mas a view só tem [3]".
 | Tratar `CODBARRA` como número | zero à esquerda some e GTIN-14 arredonda; o leitor do caixa nunca acha o produto |
 | Descartar estoque por `!saldo` | saldo 0 é o que marca "esgotado"; descartá-lo esconde o produto em vez de marcá-lo |
 | Hashear os arrays 1:N sem ordenar | a view só ordena por CDPRODUTO; a ordem dos preços varia e o Motor reenvia tudo todo ciclo |
-| Porta 3001 | colide com o Motor de Orçamentos na mesma máquina (`EADDRINUSE`) |
+| Porta 3020 | colide com o Motor de Orçamentos na mesma máquina (`EADDRINUSE`) |
 | Reaproveitar `serviceName`/repo do updater | o Shop se atualiza com a release dos Orçamentos e vira outro serviço |
 | Aumentar `chunkSize` sem medir | 413 — o ZapRun tem `bodyParser.json({limit:'5mb'})` **global**, antes das rotas |
 | Coluna de texto sem `CHARACTER SET OCTETS` na view | Acentuação perdida **irreversivelmente** na leitura |

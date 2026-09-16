@@ -12,7 +12,7 @@ const envPath = path.join(__dirname, '.env');
 // o servidor a cada ciclo. Ver backend/.env.example.
 const DEFAULT_ENV = `# Servidor local (escuta só em 127.0.0.1)
 #
-# 3010, e NÃO 3001: a 3001 é do Motor de Orçamentos, e as duas instalações
+# 3010, e NÃO 3020: a 3020 é do Motor de Orçamentos, e as duas instalações
 # convivem na mesma máquina do cliente. Com as duas na mesma porta, o segundo
 # serviço a subir morre com EADDRINUSE — e o updater do primeiro passa a fazer
 # health check no processo errado, o que é pior que falhar porque ninguém
