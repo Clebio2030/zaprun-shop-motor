@@ -58,6 +58,16 @@
       (FB_QUERY_TIMEOUT está em 300s). `_meta.linhas` em GET /produtos mede o
       tamanho do resultado.
 
+   4. PRODUTO_CODBARRA tem lixo: muitas linhas guardam o próprio CDPRODUTO no
+      lugar do código de barras (produto 1506 → codbarra "1506"). Descoberto em
+      16/09/2026: a busca automática de imagem usa o código de barras para
+      achar a foto REAL da embalagem, e "10" (o código interno do produto 10)
+      casou com o EAN de um carro em outra base — a vitrine ia mostrar a foto
+      errada. A CASE abaixo só deixa passar string numérica com o comprimento
+      de um código de verdade (EAN-8, UPC-A/EAN-13, GTIN-14); tudo o que não
+      bate vira NULL — ausência de código, não um código inventado. Nunca
+      volte a fazer `CAST(pcb.codbarra AS VARCHAR(...))` puro aqui.
+
    ── O CONTRATO ──────────────────────────────────────────────────────────────
 
    A view é PLANA e devolve o produto cartesiano dos LEFT JOINs:
@@ -86,7 +96,16 @@ SELECT
     p.cdproduto,
     CAST(p.produto  AS VARCHAR(500) CHARACTER SET OCTETS),
     CAST(p.grupo    AS VARCHAR(255) CHARACTER SET OCTETS),
-    CAST(pcb.codbarra AS VARCHAR(100) CHARACTER SET OCTETS),
+    /* Só passa se, depois do CAST/TRIM, for uma string só de dígitos com
+       comprimento de código de barras de verdade (8, 12, 13 ou 14). Qualquer
+       outra coisa — inclusive o CDPRODUTO reaproveitado como "código" — vira
+       NULL. Ver a nota 4 no cabeçalho. */
+    CASE
+      WHEN TRIM(CAST(pcb.codbarra AS VARCHAR(100) CHARACTER SET OCTETS))
+             SIMILAR TO '[0-9]{8}|[0-9]{12,14}'
+        THEN TRIM(CAST(pcb.codbarra AS VARCHAR(100) CHARACTER SET OCTETS))
+      ELSE NULL
+    END,
     pp.idpreco,
     CAST(tp.descricao AS VARCHAR(255) CHARACTER SET OCTETS),
     pp.preco,

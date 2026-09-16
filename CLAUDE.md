@@ -76,6 +76,7 @@ empresa 1, mas a view só tem [3]".
 | Mexer em `views_zaprun_shop.sql` sem ler o schema real | `CREATE OR ALTER` roda a cada boot e substitui a view do cliente — um nome de coluna errado a derruba inteira |
 | `CAST(... AS VARCHAR(n))` menor que a coluna real | não trunca: derruba a leitura com "string right truncation" e o ciclo não entrega nada. Maior é sempre seguro |
 | Ligar o `HAVING SUM(qtdeatual) > 0` na subconsulta de estoque | o produto que zera some da lista de depósitos, e o Shop deixa de distinguir "esgotado" de "sem informação" |
+| `CAST(pcb.codbarra AS VARCHAR(...))` puro, sem validar comprimento | ERPs costumam ter linha de `produto_codbarra` com o próprio CDPRODUTO no lugar do EAN — a busca automática de imagem então casa "10" com o código de outro produto qualquer, e a vitrine mostra a foto errada. Só deixe passar dígitos no comprimento de um código real (8, 12, 13, 14) |
 
 ## Release
 
