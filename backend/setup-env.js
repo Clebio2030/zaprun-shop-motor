@@ -11,7 +11,13 @@ const envPath = path.join(__dirname, '.env');
 // de frota (cron, lote, janela) não pode morar aqui — ela vem do handshake com
 // o servidor a cada ciclo. Ver backend/.env.example.
 const DEFAULT_ENV = `# Servidor local (escuta só em 127.0.0.1)
-PORT=3001
+#
+# 3002, e NÃO 3001: a 3001 é do Motor de Orçamentos, e as duas instalações
+# convivem na mesma máquina do cliente. Com as duas na mesma porta, o segundo
+# serviço a subir morre com EADDRINUSE — e o updater do primeiro passa a fazer
+# health check no processo errado, o que é pior que falhar porque ninguém
+# percebe. O healthUrl em updater/updater-config.json aponta para a 3002.
+PORT=3002
 
 # Firebird do ERP
 FB_HOST=127.0.0.1
