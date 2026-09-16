@@ -29,11 +29,11 @@
    sempre seguro. Por isso os valores abaixo são folgados. Para fixá-los nos
    tamanhos reais, leia o catálogo do ERP na máquina do cliente:
 
-     GET http://127.0.0.1:3002/diagnostico/colunas?tabelas=PRODUTO,PRODUTO_CODBARRA,PRODUTOPRECO,TABELAPRECO,DEPOSITO,MOVIMENTO
+     GET http://127.0.0.1:3010/diagnostico/colunas?tabelas=PRODUTO,PRODUTO_CODBARRA,PRODUTOPRECO,TABELAPRECO,DEPOSITO,MOVIMENTO
 
    Confira o resultado com:
 
-     GET http://127.0.0.1:3002/produtos?cdproduto=<um produto com acento no nome>
+     GET http://127.0.0.1:3010/produtos?cdproduto=<um produto com acento no nome>
 
    ── OUTRAS TRÊS COISAS QUE VALE SABER ───────────────────────────────────────
 

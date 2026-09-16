@@ -14,7 +14,7 @@ existem o handshake, o `/status`, os logs nomeados e o updater automático.
 
 | Peça | Papel |
 |---|---|
-| `backend/src/server.js` | HTTP local em `127.0.0.1:3002`: `/health`, `/status`, `/produtos`, `/sync`. |
+| `backend/src/server.js` | HTTP local em `127.0.0.1:3010`: `/health`, `/status`, `/produtos`, `/sync`. |
 | `backend/src/motor/index.js` | O ciclo. Cron + orquestração. |
 | `backend/src/motor/mapping.js` | Traduz a view do ERP no nosso payload. |
 | `backend/src/motor/sender.js` | Handshake, POST, retry, fatiamento. |
@@ -148,9 +148,9 @@ cliente por release *e* roda sozinha.
 
 | Onde | O que responde |
 |---|---|
-| `http://127.0.0.1:3002/status` | versão, último ciclo, estado do Firebird, prefixo do token, `sync_state` |
+| `http://127.0.0.1:3010/status` | versão, último ciclo, estado do Firebird, prefixo do token, `sync_state` |
 | `backend/logs/zaprun-AAAA-MM-DD.log` | tudo, com prefixo `[ZapRun]` |
-| `http://127.0.0.1:3002/produtos` | o catálogo como o Motor o enxerga, com as contagens em `_meta` |
+| `http://127.0.0.1:3010/produtos` | o catálogo como o Motor o enxerga, com as contagens em `_meta` |
 | `updater/updater.log` | histórico de atualização |
 
 Casos que o log distingue sozinho, em vez de dizer só "nenhum produto":

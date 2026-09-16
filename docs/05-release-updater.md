@@ -61,7 +61,7 @@ schtasks /run /tn "ZapRunShopUpdater"
 ```
 
 `updater\version.json` → `lastStatus` tem que virar `ok`. Depois confira
-`http://127.0.0.1:3002/status` e o painel do ZapRun.
+`http://127.0.0.1:3010/status` e o painel do ZapRun.
 
 Só então deixe a frota puxar sozinha nos horários normais.
 

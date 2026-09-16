@@ -196,7 +196,7 @@ por bytes (teto de 3 MB).
 
 ## Rota local do Motor
 
-Não é da API do ZapRun: roda em `127.0.0.1:3002`, na máquina do cliente.
+Não é da API do ZapRun: roda em `127.0.0.1:3010`, na máquina do cliente.
 
 ```
 GET /produtos                  o catálogo inteiro, já agrupado

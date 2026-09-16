@@ -29,7 +29,7 @@ const { apenasContrato, VIEW_SHOP } = require('./motor/mapping');
 const { runMotor, estadoDoMotor } = require('./motor');
 
 const app = express();
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.PORT || 3010;
 
 app.use(express.json());
 

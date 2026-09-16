@@ -4,7 +4,7 @@
   "githubToken": "",
   "releaseAssetNameContains": "",
   "serviceName": "ZapRunShop",
-  "healthUrl": "http://127.0.0.1:3002/health",
+  "healthUrl": "http://127.0.0.1:3010/health",
   "backupDir": "c:/ZapRun/Shop/updater/backups",
   "tempDir": "c:/ZapRun/Shop/updater/temp",
   "managedPaths": [

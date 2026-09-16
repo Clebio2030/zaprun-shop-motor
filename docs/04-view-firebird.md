@@ -65,7 +65,7 @@ com *"string right truncation"*, e o ciclo não entrega nada. Leia os tamanhos
 reais antes de escrever:
 
 ```
-GET http://127.0.0.1:3002/diagnostico/colunas?tabelas=PRODUTO,CODBARRA,PRECO,DEPOSITO,ESTOQUE
+GET http://127.0.0.1:3010/diagnostico/colunas?tabelas=PRODUTO,CODBARRA,PRECO,DEPOSITO,ESTOQUE
 ```
 
 Essa rota lê apenas o catálogo do Firebird (`RDB$RELATION_FIELDS`) — nenhum dado

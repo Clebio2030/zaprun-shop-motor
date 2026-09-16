@@ -40,7 +40,7 @@ São 5 passos, quase todos automáticos:
 | **4/5** Firebird | Faz backup do `firebird.conf` e ajusta `AuthServer`, `AuthClient`, `WireCrypt` | Informar a pasta do Firebird e responder `S` para reiniciar o serviço. |
 | **5/5** Serviço | Registra `ZapRunShop` no Windows e agenda o updater (08:00 e 19:00) | Nada. |
 
-Ao final, o instalador consulta `http://127.0.0.1:3002/status` e mostra versão,
+Ao final, o instalador consulta `http://127.0.0.1:3010/status` e mostra versão,
 estado do Firebird, token e API. **Leia essa tela antes de ir embora.**
 
 > Não existe passo de "criar views": o Motor aplica `sql/views_zaprun_shop.sql`
@@ -51,7 +51,7 @@ estado do Firebird, token e API. **Leia essa tela antes de ir embora.**
 No navegador **da máquina do cliente**:
 
 ```
-http://127.0.0.1:3002/status
+http://127.0.0.1:3010/status
 ```
 
 O que olhar:
@@ -66,13 +66,13 @@ O que olhar:
 Para forçar um ciclo sem esperar a próxima hora:
 
 ```
-POST http://127.0.0.1:3002/sync
+POST http://127.0.0.1:3010/sync
 ```
 
-(ou, no PowerShell: `Invoke-RestMethod -Method Post http://127.0.0.1:3002/sync`)
+(ou, no PowerShell: `Invoke-RestMethod -Method Post http://127.0.0.1:3010/sync`)
 
 Depois, confira no painel do ZapRun se os produtos chegaram ao catálogo da Loja.
-Na própria máquina, `http://127.0.0.1:3002/produtos?cdproduto=<um produto>`
+Na própria máquina, `http://127.0.0.1:3010/produtos?cdproduto=<um produto>`
 mostra o que o ERP está mandando.
 
 ## Quando dá errado

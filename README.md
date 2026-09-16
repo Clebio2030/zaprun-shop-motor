@@ -11,13 +11,13 @@ ERP dele (Firebird local) e entrega no catálogo do ZapRun Shop.
  │             ▲                │   HTTPS + token     │    produtos/sync     │
  │             │                │  ─────────────────► │                      │
  │  Motor (serviço Windows)     │                     │  StoreProduct        │
- │    porta 3002, só localhost  │  ◄───────────────── │  StoreCategory       │
+ │    porta 3010, só localhost  │  ◄───────────────── │  StoreCategory       │
  │                              │   GET /erp/handshake│                      │
  └──────────────────────────────┘                     └──────────────────────┘
 ```
 
 Irmão do **Motor de Orçamentos** (`../motor-orcamento-erp`), do qual herda a
-arquitetura inteira. As duas máquinas-alvo são a mesma, então **porta 3002** e
+arquitetura inteira. As duas máquinas-alvo são a mesma, então **porta 3010** e
 **serviço `ZapRunShop`** — ver "Conviver com o outro Motor", abaixo.
 
 ## Em uma frase
@@ -86,8 +86,8 @@ INSTALAR.bat             instalador (rodar como Administrador)
 ## A rota de diagnóstico
 
 ```
-GET http://127.0.0.1:3002/produtos                  catálogo inteiro
-GET http://127.0.0.1:3002/produtos?cdproduto=8390   um produto
+GET http://127.0.0.1:3010/produtos                  catálogo inteiro
+GET http://127.0.0.1:3010/produtos?cdproduto=8390   um produto
 ```
 
 Responde, sem RDP e sem abrir o ERP, à pergunta que sempre aparece: *"o produto
@@ -124,7 +124,7 @@ As duas instalações vivem na mesma máquina. O que **precisa** ser diferente:
 
 | | Orçamentos | Shop |
 |---|---|---|
-| Porta | 3001 | **3002** |
+| Porta | 3001 | **3010** |
 | Serviço Windows | `ZapRunOrcamentos` | **`ZapRunShop`** |
 | Repo de release | `zaprun-motor-orcamentos` | **`zaprun-shop-motor`** |
 | `backupDir`/`tempDir` | `c:/ZapRun/Orcamentos/…` | **`c:/ZapRun/Shop/…`** |
@@ -145,11 +145,11 @@ cd backend && npm test
 cd backend && npm run typecheck
 
 # na máquina do cliente: ver o estado
-#   http://127.0.0.1:3002/status
+#   http://127.0.0.1:3010/status
 # ver o catálogo como o Motor o enxerga
-#   http://127.0.0.1:3002/produtos?cdproduto=8390
+#   http://127.0.0.1:3010/produtos?cdproduto=8390
 # forçar um ciclo agora
-#   POST http://127.0.0.1:3002/sync
+#   POST http://127.0.0.1:3010/sync
 ```
 
 ## Estado atual
@@ -163,11 +163,14 @@ irreversível na leitura — "CAFÉ EM PÓ" chega "CAF? EM P?". Os tamanhos dos 
 são generosos e ainda **não foram conferidos** contra o schema real; o cabeçalho
 do arquivo diz como fixá-los.
 
-O endpoint `POST /erp/produtos/sync` **existe no código do servidor** (repo
-`zaprun`, `backend/src/modules/erp/`), com migration e serviço de ingestão, mas
-ainda **não está no ar**: falta rodar a migration e reiniciar o backend. Até lá o
-POST volta 404 e o Motor loga a falha sem perder nada — o hash não é gravado e o
-ciclo seguinte reenvia.
+O endpoint `POST /erp/produtos/sync` está **no ar** desde 15/09/2026, com o
+token de escopo próprio (`Loja > Integração ERP` no painel emite; o token de
+Orçamentos é recusado com 403).
+
+Primeira carga real, Zé Grande (15/09/2026): a view devolveu **33.188 linhas →
+4.158 produtos** — 8 linhas por produto, e o ciclo inteiro em menos de 1
+segundo. O produto cartesiano é bem mais comportado do que o pior caso do topo
+deste arquivo.
 
 O que o servidor ainda ACHATA (o Motor já entrega tudo):
 
