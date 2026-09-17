@@ -137,4 +137,34 @@ function ensureUpdaterVersionFile() {
   }
 }
 
-module.exports = { ensureUpdaterSchedule, ensureUpdaterVersionFile };
+// Garante que o health check do updater aponte para a porta em que o serviço
+// REALMENTE responde.
+//
+// Mesmo motivo dos dois acima: updater-config.json vive em updater/, que nunca
+// é atualizado. Quem instalou quando a porta era outra ficou com o endereço
+// velho gravado — e aí a atualização baixa, troca os arquivos, reinicia o
+// serviço, não consegue falar com ele na porta errada e DESFAZ tudo. Foi o que
+// aconteceu no Zé Grande: serviço novo no ar, health check na 3002, rollback.
+function ensureUpdaterHealthUrl(porta) {
+  const arquivo = path.join(UPDATER_DIR, 'updater-config.json');
+  try {
+    if (!fs.existsSync(arquivo)) return;
+
+    const cfg = JSON.parse(fs.readFileSync(arquivo, 'utf8').replace(/^\ufeff/, ''));
+    const esperado = `http://127.0.0.1:${porta}/health`;
+    if (cfg.healthUrl === esperado) return;
+
+    const anterior = cfg.healthUrl;
+    cfg.healthUrl = esperado;
+    fs.writeFileSync(arquivo, JSON.stringify(cfg, null, 2), 'utf8');
+    logInfo(`[Updater] healthUrl corrigido de ${anterior || '(vazio)'} para ${esperado}.`);
+  } catch (err) {
+    logError(`[Updater] Falha ao corrigir o healthUrl em ${arquivo}: ${err.message}`);
+  }
+}
+
+module.exports = {
+  ensureUpdaterSchedule,
+  ensureUpdaterVersionFile,
+  ensureUpdaterHealthUrl
+};

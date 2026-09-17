@@ -20,7 +20,8 @@ const firebird = require('node-firebird');
 const { logInfo, logError } = require('./logger');
 const {
   ensureUpdaterSchedule,
-  ensureUpdaterVersionFile
+  ensureUpdaterVersionFile,
+  ensureUpdaterHealthUrl
 } = require('./ensureUpdaterSchedule');
 const { snapshotState } = require('./motor/syncState');
 const { estadoDasViews } = require('./motor/migrations');
@@ -204,6 +205,7 @@ if (require.main === module) {
 
     try {
       ensureUpdaterVersionFile();
+      ensureUpdaterHealthUrl(PORT);
       ensureUpdaterSchedule();
     } catch (err) {
       logError('[ZapRun] Falha ao garantir o agendamento do updater', err);
