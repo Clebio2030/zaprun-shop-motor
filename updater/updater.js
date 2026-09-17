@@ -40,6 +40,29 @@ function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+// `updater/` fica de fora de `managedPaths` de propósito (não se atualiza
+// sozinho — ver CLAUDE.md), então `version.json` só existe numa máquina se
+// alguém o colocou lá. O repo carrega uma semente para instalação nova, mas
+// qualquer máquina cujo `updater/` foi extraído antes dessa semente existir
+// nunca vai ganhá-la por conta própria: sem isto, `main()` quebra com ENOENT
+// na primeira linha, para sempre, em todo ciclo agendado.
+function readVersionState() {
+  if (!fs.existsSync(VERSION_PATH)) {
+    const initial = {
+      currentVersion: '0.0.0',
+      lastCheckAt: null,
+      lastUpdateAt: null,
+      lastStatus: 'never-run',
+      lastReleaseTag: null,
+      lastError: null
+    };
+    warn(`version.json não existia em ${VERSION_PATH} — criando do zero (primeira checagem desta instalação).`);
+    writeJson(VERSION_PATH, initial);
+    return initial;
+  }
+  return readJson(VERSION_PATH);
+}
+
 function timestamp() {
   const now = new Date();
   const y = now.getFullYear();
@@ -399,7 +422,7 @@ async function main() {
   const force = args.has('--force');
 
   const config = readJson(CONFIG_PATH);
-  const state = readJson(VERSION_PATH);
+  const state = readVersionState();
   const nowIso = new Date().toISOString();
 
   ensureDir(config.backupDir);
