@@ -101,4 +101,40 @@ function ensureUpdaterSchedule() {
   }
 }
 
-module.exports = { ensureUpdaterSchedule };
+// Garante o updater/version.json, pelo mesmo motivo do agendamento acima: a
+// pasta updater/ nao e atualizada nos clientes, e sem esse arquivo o
+// updater.js morre com ENOENT na PRIMEIRA linha, em todo ciclo, para sempre —
+// nenhuma release chega. Aconteceu no Ze Grande: instalado sem o arquivo (a
+// semente so passou a existir no repo na v1.0.6), o atualizador falhou em
+// 08:00 e 19:00 por dias.
+//
+// 0.0.0 = "nunca atualizou": o proximo ciclo baixa a release mais recente.
+function ensureUpdaterVersionFile() {
+  const arquivo = path.join(UPDATER_DIR, 'version.json');
+  try {
+    if (fs.existsSync(arquivo)) return;
+    if (!fs.existsSync(UPDATER_DIR)) return;
+
+    fs.writeFileSync(
+      arquivo,
+      JSON.stringify(
+        {
+          currentVersion: '0.0.0',
+          lastCheckAt: null,
+          lastUpdateAt: null,
+          lastStatus: 'never-run',
+          lastReleaseTag: null,
+          lastError: null
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
+    logInfo(`[Updater] version.json faltava e foi criado em ${arquivo}.`);
+  } catch (err) {
+    logError(`[Updater] Falha ao criar ${arquivo}: ${err.message}`);
+  }
+}
+
+module.exports = { ensureUpdaterSchedule, ensureUpdaterVersionFile };

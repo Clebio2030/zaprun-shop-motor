@@ -18,7 +18,10 @@ const express = require('express');
 const firebird = require('node-firebird');
 
 const { logInfo, logError } = require('./logger');
-const { ensureUpdaterSchedule } = require('./ensureUpdaterSchedule');
+const {
+  ensureUpdaterSchedule,
+  ensureUpdaterVersionFile
+} = require('./ensureUpdaterSchedule');
 const { snapshotState } = require('./motor/syncState');
 const { estadoDasViews } = require('./motor/migrations');
 const { lerColunas, TABELAS_PADRAO } = require('./motor/schema');
@@ -200,6 +203,7 @@ if (require.main === module) {
     logInfo('================================================');
 
     try {
+      ensureUpdaterVersionFile();
       ensureUpdaterSchedule();
     } catch (err) {
       logError('[ZapRun] Falha ao garantir o agendamento do updater', err);
