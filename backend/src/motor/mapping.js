@@ -183,7 +183,12 @@ function rawSerializavel(row) {
 function mapCabecalho(row, cdproduto) {
   return {
     cdproduto,
+    // Cuidado com os nomes: PRODUTO_DESCRICAO é o NOME do produto (p.produto)
+    // e vira `name` no ZapRun. A descrição de verdade é PRODUTO_OBS
+    // (p.memoobs), exposta na view em 17/09/2026 — por isso `observacao`, e
+    // não `descricao`, que já estava ocupado.
     descricao: readTextOrNull(row, 'PRODUTO_DESCRICAO'),
+    observacao: readTextOrNull(row, 'PRODUTO_OBS'),
     grupo: readTextOrNull(row, 'GRUPO'),
     codigos_barra: [],
     precos: [],
@@ -383,6 +388,7 @@ function apenasContrato(produto) {
   return {
     cdproduto: produto.cdproduto,
     descricao: produto.descricao,
+    observacao: produto.observacao,
     grupo: produto.grupo,
     codigos_barra: produto.codigos_barra,
     precos: produto.precos,

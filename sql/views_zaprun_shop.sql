@@ -68,6 +68,29 @@
       bate vira NULL — ausência de código, não um código inventado. Nunca
       volte a fazer `CAST(pcb.codbarra AS VARCHAR(...))` puro aqui.
 
+   5. PRODUTO_DESCRICAO é o NOME do produto (p.produto), não a descrição.
+      O nome da coluna engana e já custou tempo. A descrição de verdade é
+      p.memoobs, exposta desde 17/09/2026 como PRODUTO_OBS.
+
+      memoobs costuma ser campo MEMO (BLOB SUB_TYPE TEXT). Dois cuidados:
+
+      a) SUBSTRING antes do CAST. Sem ele, um texto maior que o VARCHAR
+         derruba a leitura inteira com "string right truncation" — e o ciclo
+         não entrega NADA (mesma armadilha dos CASTs, no topo deste arquivo).
+         Com SUBSTRING o texto longo é cortado, que é o comportamento certo
+         para uma vitrine.
+
+      b) 500 caracteres, e não mais, porque ESTA VIEW É CARTESIANA: a
+         descrição se repete em TODA linha do produto. Um item com 2 códigos,
+         3 tabelas e 4 depósitos repete o texto 24 vezes. Num catálogo de
+         4.000 produtos, cada 100 bytes a mais viram megabytes por ciclo.
+         Quem desduplica é o mapping.js, mas o tráfego já aconteceu.
+
+      Se o ERP do cliente não tiver a coluna memoobs, o CREATE OR ALTER falha,
+      o Firebird MANTÉM a view anterior e o Motor continua rodando com ela
+      (migrations.js captura o erro por comando e segue). A falha aparece no
+      diagnóstico, não em produto sumido da vitrine.
+
    ── O CONTRATO ──────────────────────────────────────────────────────────────
 
    A view é PLANA e devolve o produto cartesiano dos LEFT JOINs:
@@ -83,6 +106,7 @@
 CREATE OR ALTER VIEW ZAPRUN_SHOP(
     CDPRODUTO,
     PRODUTO_DESCRICAO,
+    PRODUTO_OBS,
     GRUPO,
     CODBARRA,
     IDPRECO,
@@ -95,6 +119,9 @@ AS
 SELECT
     p.cdproduto,
     CAST(p.produto  AS VARCHAR(500) CHARACTER SET OCTETS),
+    /* Descrição do produto. SUBSTRING ANTES do CAST — ver a nota 5 no topo:
+       sem ele um MEMO longo derruba o ciclo inteiro, e com ele apenas corta. */
+    CAST(SUBSTRING(p.memoobs FROM 1 FOR 500) AS VARCHAR(500) CHARACTER SET OCTETS),
     CAST(p.grupo    AS VARCHAR(255) CHARACTER SET OCTETS),
     /* Só passa se, depois do CAST/TRIM, for uma string só de dígitos com
        comprimento de código de barras de verdade (8, 12, 13 ou 14). Qualquer
