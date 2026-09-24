@@ -178,6 +178,7 @@ async function modoLinear() {
   // de uma vez), o question perde as linhas que chegam antes da pergunta e o
   // script morre no meio sem gravar o .env.
   const linhas = rl[Symbol.asyncIterator]();
+  let entradaAcabou = false;
 
   /** @returns {Promise<string>} */
   const perguntar = async (texto, padrao = '', { secreto = false } = {}) => {
@@ -185,6 +186,7 @@ async function modoLinear() {
     process.stdout.write(`${texto}${sufixo}: `);
     mudo = secreto;
     const { value, done } = await linhas.next();
+    if (done) entradaAcabou = true;
     mudo = false;
     if (secreto) process.stdout.write(os.EOL);
     const resposta = done ? '' : String(value).trim();
@@ -212,9 +214,25 @@ async function modoLinear() {
     'Usuário (LINEAR_USER)',
     (sugestao && sugestao.user) || atual.LINEAR_USER || ''
   );
-  const senha = await perguntar('Senha (LINEAR_PASSWORD) — não aparece ao digitar', atual.LINEAR_PASSWORD || '', {
-    secreto: true
-  });
+  // A senha não aparece ao digitar — e foi exatamente por isso que, na
+  // primeira loja (23/09/2026), ela ficou VAZIA: o implantador deu Enter
+  // achando que o campo não respondia, o .env nasceu sem LINEAR_PASSWORD e o
+  // teste de conexão (que falhou antes, por VPN) não denunciou. Agora: vazia
+  // sem senha anterior é recusada, e o tamanho do que chegou é mostrado — dá
+  // retorno sem expor a senha na tela.
+  let senha = '';
+  for (;;) {
+    senha = await perguntar('Senha (LINEAR_PASSWORD) — não aparece ao digitar', atual.LINEAR_PASSWORD || '', {
+      secreto: true
+    });
+    if (senha || entradaAcabou) break;
+    console.log('  A senha não pode ficar vazia. Digite (ou cole com o botão direito) e dê Enter.');
+  }
+  console.log(
+    senha === atual.LINEAR_PASSWORD
+      ? '  Mantida a senha que já estava no .env.'
+      : `  Senha recebida (${senha.length} caracteres).`
+  );
   const empresa = await perguntar('Empresa no Linear (LINEAR_EMPRESA)', atual.LINEAR_EMPRESA || '1');
 
   console.log('');
