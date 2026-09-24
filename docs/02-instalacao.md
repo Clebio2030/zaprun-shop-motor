@@ -2,6 +2,11 @@
 
 ## Antes de ir até o cliente
 
+**Qual é o ERP da loja?** O instalador pergunta no passo 3. Para o **Linear
+Sistemas**, veja a lista própria logo abaixo e o `docs/06-linear.md`.
+
+### Automec (Firebird)
+
 Tenha em mãos:
 
 1. **Token de integração** — gerado no painel do ZapRun, em **Integrações → ERP**.
@@ -12,6 +17,20 @@ Tenha em mãos:
 3. **IP e porta do Firebird** — normalmente `127.0.0.1` e `3050`
 4. **Pasta de instalação do Firebird** — onde fica o `firebird.conf`.
    Ex.: `C:\Program Files\Firebird\Firebird_5_0`
+
+### Linear Sistemas (MySQL na nuvem da Linear)
+
+1. **Token de integração**, igual ao do Automec (Loja → Integração ERP).
+2. **A VPN da Linear conectada na máquina** (OpenVPN). Sem ela o Motor não
+   alcança o banco — confira pelo AnyDesk antes de instalar.
+3. **Banco, usuário e senha do BI**, fornecidos pela Linear. O instalador
+   sugere banco e usuário pelo CNPJ (`bd` + CNPJ, `8 dígitos` + `_bi`).
+4. Nada de Firebird: o passo 4 é pulado.
+
+No painel, em **Loja → Integração ERP**, marque **Linear Sistemas** — a tela
+passa a mostrar preço e promoção em vez das tabelas por entrega/retirada.
+
+### Testar o token
 
 Vale testar o token antes de sair, de qualquer máquina com Node:
 
@@ -36,12 +55,12 @@ São 5 passos, quase todos automáticos:
 |---|---|---|
 | **1/5** Node.js | Abre o instalador do `node.msi` | "Next" até o fim. Se a máquina já tiver Node atual, pode cancelar. |
 | **2/5** Dependências | `npm install` | Esperar (alguns minutos). |
-| **3/5** Ambiente | Pergunta IP, porta, caminho do banco e o token | Digitar. Enter em branco mantém o valor atual. |
-| **4/5** Firebird | Faz backup do `firebird.conf` e ajusta `AuthServer`, `AuthClient`, `WireCrypt` | Informar a pasta do Firebird e responder `S` para reiniciar o serviço. |
+| **3/5** ERP e ambiente | Pergunta o ERP (1 Automec, 2 Linear) e os dados de conexão. No Linear, testa a conexão no fim | Escolher e digitar. Enter em branco mantém o valor atual. |
+| **4/5** Firebird (só Automec) | Faz backup do `firebird.conf` e ajusta `AuthServer`, `AuthClient`, `WireCrypt` | Informar a pasta do Firebird e responder `S` para reiniciar o serviço. |
 | **5/5** Serviço | Registra `ZapRunShop` no Windows e agenda o updater (08:00 e 19:00) | Nada. |
 
 Ao final, o instalador consulta `http://127.0.0.1:3010/status` e mostra versão,
-estado do Firebird, token e API. **Leia essa tela antes de ir embora.**
+ERP, estado do banco (com o motivo, se falhou), token e API. **Leia essa tela antes de ir embora.**
 
 > Não existe passo de "criar views": o Motor aplica `sql/views_zaprun_shop.sql`
 > sozinho a cada boot, pelo driver do Node — sem depender do `isql.exe`.
@@ -58,7 +77,8 @@ O que olhar:
 
 | Campo | Esperado |
 |---|---|
-| `firebird` | `"ok"` |
+| `erp` | `automec` ou `linear` — o que foi escolhido na instalação |
+| `banco` | `"ok"` (senão, `"erro: <motivo>"`) |
 | `token` | o prefixo do token que você colou |
 | `sincronizacao` | ganha entradas depois do primeiro ciclo |
 | `ultimoCiclo.enviados` | ≥ 1 quando o catálogo mudou desde o último ciclo |
@@ -83,7 +103,10 @@ mostra o que o ERP está mandando.
 | `firebird.conf` não encontrado | Caminho errado | Achar a pasta no Disco C:, copiar da barra de endereços e colar (botão direito cola) |
 | Serviço não instala | Não rodou como Administrador | Botão direito → Executar como administrador |
 | `/status` não responde | Serviço parado | `services.msc` → `ZapRunShop` → Iniciar. Ver `backend\logs\` |
-| `firebird: "error"` | Banco/credencial errados | Conferir `FB_DATABASE` em `backend\.env` |
+| `banco: "erro: ..."` (Automec) | Banco/credencial errados | Conferir `FB_DATABASE` em `backend\.env` |
+| `banco: "erro: Sem acesso ao banco da Linear..."` | VPN da Linear desconectada | Conectar a VPN; o próximo ciclo segue sozinho |
+| `banco: "erro: Usuário ou senha..."` (Linear) | Senha errada — ou sem aspas no `.env` | Rodar o `INSTALAR.bat` de novo (ele grava entre aspas) |
+| Log: "O painel do ZapRun diz que esta loja usa ..." | ERP escolhido no painel ≠ o instalado | Corrigir em Loja → Integração ERP, ou reinstalar com a opção certa |
 | Log: "views_zaprun_shop.sql está vazio" | **Normal por enquanto** — a view do ERP ainda não foi escrita | Nada. Ver `docs/04-view-firebird.md` |
 | Log: "Token de integração inválido" | Token errado, de outra empresa, ou revogado | Gerar outro no painel e corrigir `ZAPRUN_TOKEN` em `backend\.env` |
 | Log: "o token autoriza a empresa X, mas a view só tem [Y]" | Escopo do token não bate com o ERP | Ajustar `erpCompanyIds` do token no painel |

@@ -1,7 +1,15 @@
 # ZapRun Shop — Motor de Catálogo
 
 Serviço Node.js que roda **na máquina do cliente**, lê o catálogo de produtos do
-ERP dele (Firebird local) e entrega no catálogo do ZapRun Shop.
+ERP dele e entrega no catálogo do ZapRun Shop. Dois ERPs, escolhidos na
+instalação (`ERP_TIPO` no `backend/.env`):
+
+| ERP | Banco | Como lê |
+|---|---|---|
+| **Automec** (padrão) | Firebird local | view `ZAPRUN_SHOP`, aplicada no boot |
+| **Linear Sistemas** | MySQL na nuvem da Linear, pela VPN | SELECT no Motor — ver [docs/06-linear.md](docs/06-linear.md) |
+
+Um instalador, um serviço, um updater e um repo de release para os dois.
 
 ```
   Máquina do cliente (Windows)                          Servidor ZapRun
@@ -22,8 +30,8 @@ arquitetura inteira. As duas máquinas-alvo são a mesma, então **porta 3010** 
 
 ## Em uma frase
 
-De hora em hora (08h–22h), o Motor pergunta ao servidor como deve trabalhar, lê
-a view de produtos do ERP, reduz as linhas planas a produtos aninhados, e envia
+A cada 30 minutos (08h–22h), o Motor pergunta ao servidor como deve trabalhar,
+lê o catálogo do ERP, reduz as linhas planas a produtos aninhados, e envia
 em lotes o catálogo que mudou — conferindo, no fim, que o servidor gravou tudo
 o que ele mandou.
 
@@ -72,7 +80,11 @@ backend/src/
     index.js             orquestrador: handshake → extrai → envia → confere
     firebird.js          pool de conexões com timeout
     extractor.js         consulta a view e agrupa
-    mapping.js           ⟵ view → catálogo. O ÚNICO arquivo que muda por ERP
+    mapping.js           ⟵ linhas → catálogo. Contrato de colunas comum aos ERPs
+    erp/                 ⟵ um adaptador por ERP (ERP_TIPO)
+      index.js           escolhe o adaptador
+      automec.js         Firebird: extractor + migrations + schema
+      linear/            MySQL: conexão, consulta, GTIN
     encoding.js          decodificação WIN1252 (acentuação)
     sender.js            handshake, POST, retry, fatiamento por bytes
     syncState.js         hash do catálogo por empresa

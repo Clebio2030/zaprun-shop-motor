@@ -92,6 +92,7 @@ test('GET /produtos devolve o catálogo agrupado', async () => {
       {
         cdproduto: 8390,
         descricao: 'NOME DO PRODUTO',
+        observacao: null,
         grupo: 'NOME DO GRUPO',
         codigos_barra: ['7908572802578'],
         precos: [{ idpreco: 1, tabela: 'CARTAO', preco: 44.99 }],
@@ -149,7 +150,7 @@ test('a resposta não vaza campos internos do Motor', async () => {
   await comServidor(async get => {
     const body = await (await get('/produtos')).json();
     assert.deepStrictEqual(Object.keys(body.produtos[0]).sort(), [
-      'cdproduto', 'codigos_barra', 'descricao', 'estoque', 'grupo', 'precos'
+      'cdproduto', 'codigos_barra', 'descricao', 'estoque', 'grupo', 'observacao', 'precos'
     ]);
   });
 });

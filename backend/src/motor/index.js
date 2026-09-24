@@ -3,7 +3,8 @@
 //
 // Ciclo:
 //   1. GET /erp/handshake        → confirma o token e recebe a config de frota
-//   2. Lê a view ZAPRUN_SHOP do Firebird e agrupa em produtos
+//   2. Lê o catálogo do ERP desta máquina (erp/: Automec ou Linear) e agrupa
+//      em produtos
 //   3. Separa por empresa e compara o hash de CADA produto com o do último
 //      envio confirmado — manda só os que mudaram
 //   4. POST /erp/produtos/sync em lotes ordenados, com fail-fast
@@ -29,14 +30,13 @@ const cron = require('node-cron');
 const crypto = require('crypto');
 const { logInfo, logWarn, logError } = require('../logger');
 const { handshake, enviarProdutos, fatiarLote } = require('./sender');
-const { extrairProdutos, listarEmpresasDoErp } = require('./extractor');
+const { erp, tipoErp } = require('./erp');
 const {
   checkStateChanged,
   updateState,
   diffCatalogo,
   precisaFull
 } = require('./syncState');
-const { runDatabaseMigrations } = require('./migrations');
 
 /** @typedef {import('../types/zaprun-shop').ProdutoCatalogo} ProdutoCatalogo */
 
@@ -101,7 +101,7 @@ async function runMotor() {
 
     logInfo(`[ZapRun] Iniciando ciclo — referência ${dataReferencia}.`);
 
-    const { produtos, linhas } = await extrairProdutos(permitidas);
+    const { produtos, linhas } = await erp().extrairProdutos(permitidas);
     logInfo(`[ZapRun] View devolveu ${linhas} linha(s) → ${produtos.length} produto(s).`);
     resumo.produtos = produtos.length;
 
@@ -287,6 +287,16 @@ async function resolverConfig() {
     );
   }
 
+  // O painel diz qual ERP a loja usa (Loja > Integração ERP). Se não bate com o
+  // desta máquina, alguém instalou a opção errada — ou escolheu errado na tela.
+  // Não bloqueia: o catálogo continua chegando, e o aviso diz onde olhar.
+  if (remoto && remoto.erpSistema && remoto.erpSistema !== tipoErp()) {
+    logWarn(
+      `[ZapRun] O painel do ZapRun diz que esta loja usa "${remoto.erpSistema}", mas este Motor foi instalado como "${tipoErp()}". ` +
+        'Confira a escolha em Loja > Integração ERP, ou reinstale o Motor com a opção certa.'
+    );
+  }
+
   if (!remoto) {
     // Servidor fora do ar não pode parar o Motor: ele segue com os defaults e
     // tenta de novo no próximo ciclo. O que NÃO fazemos é assumir `ativo` —
@@ -334,10 +344,10 @@ function agruparPorEmpresa(produtos) {
  */
 async function diagnosticarVazio(permitidas) {
   try {
-    const noErp = await listarEmpresasDoErp();
+    const noErp = await erp().listarEmpresasDoErp();
     if (noErp.length === 0) {
       logWarn(
-        '[ZapRun] Nenhum produto na view ZAPRUN_SHOP — confira se ela foi criada e tem dados (GET /produtos no servidor local mostra o erro exato).'
+        `[ZapRun] Nenhum produto em ${erp().origem} — ${erp().dicaVazio}`
       );
       return;
     }
@@ -362,7 +372,13 @@ function hojeFormatado() {
 
 /** Estado exposto em GET /status do servidor local. */
 function estadoDoMotor() {
-  return { cicloEmAndamento, cronExpr: cronExprAtual, ultimoCiclo, sourceVersion: SOURCE_VERSION };
+  return {
+    erp: tipoErp(),
+    cicloEmAndamento,
+    cronExpr: cronExprAtual,
+    ultimoCiclo,
+    sourceVersion: SOURCE_VERSION
+  };
 }
 
 // ── Cron ─────────────────────────────────────────────────────────────────────
@@ -395,10 +411,16 @@ function aplicarCron(expr) {
 if (process.env.ZAPRUN_DISABLE_BOOTSTRAP !== 'true') {
   aplicarCron(PADRAO.cronExpr);
 
-  // Aplica as views no Firebird antes do primeiro ciclo. Falha aqui não pode
-  // derrubar o serviço: sem view, o ciclo loga o erro e tenta de novo depois.
-  runDatabaseMigrations()
-    .catch(err => logError('[ZapRun] Erro na aplicação das views no boot:', err))
+  // Prepara o banco antes do primeiro ciclo — no Automec, aplica as views no
+  // Firebird; no Linear, nada. Falha aqui não pode derrubar o serviço: sem
+  // view, o ciclo loga o erro e tenta de novo depois. Um ERP_TIPO inválido
+  // também cai aqui, e fica no log com a lista do que é suportado.
+  Promise.resolve()
+    .then(() => {
+      logInfo(`[ZapRun] ERP desta instalação: ${erp().nome}.`);
+      return erp().prepararBanco();
+    })
+    .catch(err => logError('[ZapRun] Erro ao preparar o banco do ERP no boot:', err))
     .then(() => {
       // Reagenda com o ritmo que o servidor manda, e roda o primeiro ciclo já.
       // Sem isto, uma instalação nova ficaria até uma hora sem enviar nada, e o

@@ -113,17 +113,34 @@ echo.
 echo [SUCESSO] Dependencias instaladas!
 
 :: ==================================================
-:: [PASSO 3/5] AMBIENTE (.env)
+:: [PASSO 3/5] SISTEMA (ERP) E AMBIENTE (.env)
 :: ==================================================
+:: Um instalador so para todos os ERPs: o servico, a porta, o updater e o
+:: repositorio de release sao os mesmos. O que muda e de onde o catalogo e lido,
+:: e isso fica no ERP_TIPO do backend\.env (ver backend/src/motor/erp/).
 color 0A
 echo.
 echo --------------------------------------------------
-echo [PASSO 3/5] Configuracao do ambiente (.env)
+echo [PASSO 3/5] Sistema (ERP) da loja e configuracao (.env)
 echo --------------------------------------------------
 timeout /t 1 >nul
 color 07
 
 echo.
+echo Qual e o sistema (ERP) desta loja?
+echo.
+echo    1 - Automec           (Firebird, banco nesta maquina ou na rede da loja)
+echo    2 - Linear Sistemas   (MySQL na nuvem da Linear, acessado pela VPN)
+echo.
+choice /c 12 /n /m "Digite 1 ou 2: "
+if errorlevel 2 (set "ERP=linear") else (set "ERP=automec")
+echo.
+echo Sistema escolhido: !ERP!
+echo.
+
+if "!ERP!"=="linear" goto ENV_LINEAR
+
+:ENV_AUTOMEC
 echo Informe os dados de conexao. Deixe em branco para MANTER o valor atual.
 echo.
 
@@ -158,7 +175,25 @@ if exist "setup-env.js" (
     echo [ERRO] setup-env.js nao encontrado na pasta backend.
     color 07
 )
+goto ENV_OK
 
+:ENV_LINEAR
+:: As perguntas do Linear sao feitas pelo proprio setup-env.js, e nao aqui com
+:: set /p: a senha do banco da Linear tem caracteres (# @, as vezes ! e %%) que
+:: o cmd corrompe com delayed expansion. No Node ela chega intacta, e o script
+:: ja testa a conexao no fim.
+echo IMPORTANTE: o banco da Linear fica na nuvem. Esta maquina precisa estar
+echo conectada na VPN da Linear (OpenVPN) para o Motor alcancar o banco.
+echo.
+if exist "setup-env.js" (
+    node setup-env.js --linear
+) else (
+    color 0C
+    echo [ERRO] setup-env.js nao encontrado na pasta backend.
+    color 07
+)
+
+:ENV_OK
 echo.
 echo [SUCESSO] Ambiente configurado!
 
@@ -167,6 +202,9 @@ echo Configurando o atualizador automatico...
 cd /d "%~dp0\updater"
 node setup-updater.js "ZapRunShop" "3010"
 cd /d "%~dp0"
+
+:: O Linear nao tem Firebird: o banco e MySQL na nuvem da Linear.
+if "!ERP!"=="linear" goto SERVICO
 
 :: ==================================================
 :: [PASSO 4/5] FIREBIRD (firebird.conf)
@@ -296,6 +334,7 @@ if /i "!RESTART_FB!"=="S" (
         "}"
 )
 
+:SERVICO
 :: ==================================================
 :: [PASSO 5/5] SERVICO WINDOWS
 :: ==================================================
@@ -343,10 +382,11 @@ powershell -NoProfile -Command ^
     "try {" ^
     "  $r = Invoke-RestMethod -Uri 'http://127.0.0.1:3010/status' -TimeoutSec 20;" ^
     "  Write-Host '  Versao do Motor : ' $r.sourceVersion;" ^
-    "  Write-Host '  Firebird        : ' $r.firebird;" ^
+    "  Write-Host '  Sistema (ERP)   : ' $r.erpNome;" ^
+    "  Write-Host '  Banco           : ' $r.banco;" ^
     "  Write-Host '  Token           : ' $r.token;" ^
     "  Write-Host '  API             : ' $r.apiUrl;" ^
-    "  if ($r.firebird -ne 'ok') { Write-Host ''; Write-Host '  [ATENCAO] Sem conexao com o Firebird - confira FB_DATABASE no backend\.env.' -ForegroundColor Yellow }" ^
+    "  if ($r.banco -ne 'ok') { Write-Host ''; Write-Host '  [ATENCAO] Sem conexao com o banco do ERP - o motivo esta na linha Banco, acima.' -ForegroundColor Yellow }" ^
     "} catch {" ^
     "  Write-Host '  [ATENCAO] O Motor nao respondeu. Confira o servico ZapRunShop no services.msc' -ForegroundColor Yellow;" ^
     "  Write-Host '  e os logs em backend\logs\.' -ForegroundColor Yellow" ^
@@ -381,7 +421,7 @@ echo               INSTALACAO FINALIZADA
 echo ==================================================
 color 07
 echo.
-echo O Motor roda sozinho de hora em hora, das 08h as 22h.
+echo O Motor roda sozinho a cada 30 minutos, das 08h as 22h.
 echo Para forcar um envio agora, abra no navegador da maquina:
 echo    http://127.0.0.1:3010/status
 echo.

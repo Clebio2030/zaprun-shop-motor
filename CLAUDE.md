@@ -1,7 +1,8 @@
 # ZapRun Shop — instruções para IA (Claude e demais)
 
 Este repo é o **Motor ZapRun Shop**: serviço Node.js que roda na máquina de cada
-cliente, lê o catálogo de produtos do ERP dele (Firebird local) e entrega na API
+cliente, lê o catálogo de produtos do ERP dele — **Automec** (Firebird local) ou
+**Linear Sistemas** (MySQL na nuvem, pela VPN), por `ERP_TIPO` — e entrega na API
 do ZapRun via `POST /erp/produtos/sync`, alimentando o catálogo do Shop
 (`StoreProduct`).
 
@@ -48,9 +49,13 @@ empresa 1, mas a view só tem [3]".
 
 ## Ao trabalhar aqui
 
-- **Trocar de ERP = trocar `sql/views_zaprun_shop.sql` + `motor/mapping.js`.** Se
-  uma mudança de ERP encostar em `index.js`, `sender.js` ou `syncState.js`, o
-  desenho vazou — repense.
+- **ERP novo = um adaptador em `motor/erp/`** que devolve linhas com os nomes de
+  coluna de `motor/mapping.js` (a consulta dele faz os aliases). O agrupamento é
+  o mesmo para todos. Se um ERP novo encostar em `index.js`, `sender.js` ou
+  `syncState.js`, o desenho vazou — repense. Ver `docs/06-linear.md`.
+- **Campo que só um ERP informa** (`unidade`, `promocao`) só EXISTE no produto
+  quando a consulta traz a coluna. Nunca `null` por padrão: para o servidor,
+  `promocao: null` desmarca a oferta, e o hash do Automec mudaria.
 - Rode os dois portões: `cd backend && npm test && npm run typecheck`.
   Ambos rodam sem Firebird e sem rede.
 - `.env` e `sync_state.json` são preservados no update. Não dependa deles para
@@ -76,6 +81,9 @@ empresa 1, mas a view só tem [3]".
 | Mexer em `views_zaprun_shop.sql` sem ler o schema real | `CREATE OR ALTER` roda a cada boot e substitui a view do cliente — um nome de coluna errado a derruba inteira |
 | `CAST(... AS VARCHAR(n))` menor que a coluna real | não trunca: derruba a leitura com "string right truncation" e o ciclo não entrega nada. Maior é sempre seguro |
 | Ligar o `HAVING SUM(qtdeatual) > 0` na subconsulta de estoque | o produto que zera some da lista de depósitos, e o Shop deixa de distinguir "esgotado" de "sem informação" |
+| `require('mysql2')` fora de `erp/linear/mysql.js` (carregado sob demanda) | o updater não roda `npm install`: o Automec atualizado cai no boot com "Cannot find module" |
+| Senha do Linear no `.env` sem aspas | `#` é comentário para o dotenv — senha cortada, `Access denied` que parece culpa da Linear |
+| `CURDATE()` na consulta do Linear | MySQL da Linear pode estar em UTC; às 21h de Brasília já é amanhã. Use a data da máquina, por parâmetro |
 | `CAST(pcb.codbarra AS VARCHAR(...))` puro, sem validar comprimento | ERPs costumam ter linha de `produto_codbarra` com o próprio CDPRODUTO no lugar do EAN — a busca automática de imagem então casa "10" com o código de outro produto qualquer, e a vitrine mostra a foto errada. Só deixe passar dígitos no comprimento de um código real (8, 12, 13, 14) |
 
 ## Release

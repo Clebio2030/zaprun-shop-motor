@@ -1,12 +1,16 @@
 // motor/mapping.js
 // ─────────────────────────────────────────────────────────────────────────────
-//  ⚠️  ESTE É O ÚNICO ARQUIVO QUE MUDA QUANDO O ERP MUDA.
+//  O CONTRATO DE LINHA comum a todos os ERPs.
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Ele traduz as LINHAS da view Firebird `ZAPRUN_SHOP` nos OBJETOS de produto que
-// a API do ZapRun grava no catálogo do Shop. Todo o resto do Motor (ciclo,
-// lotes, retry, estado) é agnóstico ao formato do ERP — trocar de ERP é trocar
-// a view + este arquivo.
+// Ele traduz as LINHAS de uma consulta de catálogo nos OBJETOS de produto que a
+// API do ZapRun grava no catálogo do Shop. Todo o resto do Motor (ciclo, lotes,
+// retry, estado) é agnóstico ao ERP.
+//
+// Cada ERP (motor/erp/) entrega linhas com os MESMOS nomes de coluna descritos
+// abaixo: o Automec pela view Firebird `ZAPRUN_SHOP`, o Linear por um SELECT no
+// MySQL que devolve os mesmos aliases. Por isso este agrupamento serve aos dois.
+// Um ERP novo escreve a consulta dele — não um mapping novo.
 //
 // ── O problema que este arquivo resolve ─────────────────────────────────────
 //
@@ -38,6 +42,11 @@
 //   IDPRECO, TABELA_PRECO, PRECO
 //   CDDEPOSITO, DEPOSITO_DESCRICAO, SALDO
 //   IDEMPRESA            só em ERP multiempresa (ver agruparProdutos)
+//   PRODUTO_OBS          descrição longa
+//   UNIDADE              UN, KG — hoje só o Linear
+//   PROMO_PRECO, PROMO_INICIO, PROMO_FIM, PROMO_NOME
+//                        promoção vigente — hoje só o Linear. A PRESENÇA da
+//                        coluna liga o campo `promocao` (ver mapPromocao)
 //
 // Toda coluna de TEXTO precisa sair da view como
 //   CAST(campo AS VARCHAR(n) CHARACTER SET OCTETS)
@@ -49,6 +58,7 @@ const { readTextOrNull } = require('./encoding');
 /** @typedef {import('../types/zaprun-shop').ProdutoCatalogo} ProdutoCatalogo */
 /** @typedef {import('../types/zaprun-shop').ProdutoPreco} ProdutoPreco */
 /** @typedef {import('../types/zaprun-shop').ProdutoEstoque} ProdutoEstoque */
+/** @typedef {import('../types/zaprun-shop').ProdutoPromocao} ProdutoPromocao */
 /** @typedef {import('../types/zaprun-shop').ResultadoAgrupamento} ResultadoAgrupamento */
 
 /**
@@ -181,7 +191,8 @@ function rawSerializavel(row) {
  * @returns {ProdutoCatalogo}
  */
 function mapCabecalho(row, cdproduto) {
-  return {
+  /** @type {ProdutoCatalogo} */
+  const produto = {
     cdproduto,
     // Cuidado com os nomes: PRODUTO_DESCRICAO é o NOME do produto (p.produto)
     // e vira `name` no ZapRun. A descrição de verdade é PRODUTO_OBS
@@ -196,6 +207,73 @@ function mapCabecalho(row, cdproduto) {
     erpCompanyId: toInt(col(row, 'IDEMPRESA')),
     raw: rawSerializavel(row)
   };
+
+  // Os dois campos abaixo só EXISTEM no produto quando a consulta traz a
+  // coluna. Não é enfeite: um produto do Automec com `promocao: null` diria ao
+  // servidor "este ERP controla ofertas e este produto não está em nenhuma" —
+  // e o servidor desmarcaria a oferta que o lojista marcou à mão. Ausente quer
+  // dizer "não sei", e o servidor não mexe. Também mantém o hash do Automec
+  // idêntico ao de antes, sem reenvio do catálogo inteiro na atualização.
+  if (temColuna(row, 'UNIDADE')) produto.unidade = readTextOrNull(row, 'UNIDADE');
+  if (temColuna(row, 'PROMO_PRECO')) produto.promocao = mapPromocao(row);
+
+  return produto;
+}
+
+/** A linha traz a coluna (mesmo que NULL)? Tolera MAIÚSCULA/minúscula. */
+function temColuna(row, nome) {
+  if (!row) return false;
+  return nome in row || String(nome).toLowerCase() in row;
+}
+
+/**
+ * Promoção vigente a partir de uma linha, ou null quando o produto não está em
+ * nenhuma.
+ *
+ * Preço zero ou negativo é "sem promoção": é como o Linear marca o campo vazio
+ * (`es1_prpromocao = 0`). Anunciar oferta de R$ 0,00 seria vender de graça.
+ *
+ * Aqui NÃO se compara com o preço normal. Promoção maior que o preço existe no
+ * cadastro real (a banana: 3,99 de promoção sobre 3,59) e quem decide o que
+ * fazer com ela é o servidor, onde a regra é barata de mudar — o Motor só
+ * relata o que o ERP diz.
+ *
+ * @param {ZapRunShopRow} row
+ * @returns {ProdutoPromocao|null}
+ */
+function mapPromocao(row) {
+  const preco = toNumber(col(row, 'PROMO_PRECO'));
+  if (preco === null || preco <= 0) return null;
+
+  return {
+    preco,
+    inicio: toData(col(row, 'PROMO_INICIO')),
+    fim: toData(col(row, 'PROMO_FIM')),
+    nome: readTextOrNull(row, 'PROMO_NOME')
+  };
+}
+
+/**
+ * Data → 'YYYY-MM-DD', ou null.
+ *
+ * Aceita string (o driver MySQL roda com `dateStrings`) e Date. Não converte
+ * fuso: a data do ERP é "dia do calendário da loja", e passar por UTC poderia
+ * trocar o dia de fim de uma promoção.
+ */
+function toData(v) {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${v.getFullYear()}-${m}-${d}`;
+  }
+  const s = readTextOrNull({ v }, 'v');
+  if (s === null) return null;
+  const casou = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  // "0000-00-00" é como o MySQL guarda data vazia em tabela antiga.
+  if (!casou || casou[1] === '0000') return null;
+  return `${casou[1]}-${casou[2]}-${casou[3]}`;
 }
 
 /**
@@ -385,7 +463,8 @@ function agruparProdutos(rows, empresasPermitidas = null) {
  * @returns {ProdutoCatalogo}
  */
 function apenasContrato(produto) {
-  return {
+  /** @type {ProdutoCatalogo} */
+  const contrato = {
     cdproduto: produto.cdproduto,
     descricao: produto.descricao,
     observacao: produto.observacao,
@@ -394,6 +473,10 @@ function apenasContrato(produto) {
     precos: produto.precos,
     estoque: produto.estoque
   };
+  // Mesma regra do mapCabecalho: só aparece quando o ERP informa.
+  if (produto.unidade !== undefined) contrato.unidade = produto.unidade;
+  if (produto.promocao !== undefined) contrato.promocao = produto.promocao;
+  return contrato;
 }
 
 module.exports = {
@@ -405,6 +488,8 @@ module.exports = {
   mapCabecalho,
   mapPreco,
   mapEstoque,
+  mapPromocao,
+  toData,
   chaveDaLinha,
   rawSerializavel,
   toCodigoBarras,

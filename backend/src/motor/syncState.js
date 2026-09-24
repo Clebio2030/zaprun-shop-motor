@@ -64,7 +64,8 @@ function saveState(state) {
  * contadores) que mudam sem que o produto tenha mudado.
  */
 function formaCanonica(p) {
-  return {
+  /** @type {Record<string, unknown>} */
+  const forma = {
     cdproduto: p.cdproduto,
     descricao: p.descricao,
     grupo: p.grupo,
@@ -76,6 +77,20 @@ function formaCanonica(p) {
       .map(x => [x.cddeposito, x.deposito, x.saldo])
       .sort((a, b) => String(a).localeCompare(String(b)))
   };
+  // Só entram quando o ERP os informa (Linear). No Automec a forma continua
+  // byte a byte a de antes — senão a atualização do Motor faria todo produto
+  // parecer alterado e reenviaria o catálogo inteiro de cada cliente.
+  //
+  // A promoção PRECISA entrar quando existe: ela começa e termina sem que
+  // preço normal, estoque ou nome mudem. Fora do hash, o Motor veria "nada
+  // mudou" e a oferta nunca chegaria (nem sairia) da vitrine.
+  if (p.unidade !== undefined) forma.unidade = p.unidade;
+  if (p.promocao !== undefined) {
+    forma.promocao = p.promocao
+      ? [p.promocao.preco, p.promocao.inicio, p.promocao.fim, p.promocao.nome]
+      : null;
+  }
+  return forma;
 }
 
 /**

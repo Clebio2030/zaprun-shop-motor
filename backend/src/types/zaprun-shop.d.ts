@@ -71,6 +71,21 @@ interface ZapRunShopRow {
    */
   IDEMPRESA?: ColunaNumero;
 
+  /** Descrição longa (memoobs no Automec). */
+  PRODUTO_OBS?: ColunaTexto;
+
+  /** Unidade de venda (UN, KG). Só a consulta do Linear traz hoje. */
+  UNIDADE?: ColunaTexto;
+
+  /**
+   * Promoção vigente. Só a consulta do Linear traz hoje. A PRESENÇA da coluna
+   * é o que liga o campo `promocao` no produto — ver mapping.mapPromocao.
+   */
+  PROMO_PRECO?: ColunaNumero;
+  PROMO_INICIO?: ColunaTexto;
+  PROMO_FIM?: ColunaTexto;
+  PROMO_NOME?: ColunaTexto;
+
   /** Colunas extras da view chegam aqui e são preservadas em `raw`. */
   [coluna: string]: unknown;
 }
@@ -105,10 +120,34 @@ interface ProdutoEstoque {
  * resposta honesta para "esse produto não tem preço cadastrado" — e é
  * diferente de `null`, que significaria "não sei".
  */
+/**
+ * A promoção que o ERP diz estar valendo HOJE para o produto.
+ *
+ * O preço normal continua em `precos`: o servidor é quem decide se anuncia a
+ * oferta (só quando ela é menor que o preço normal).
+ */
+interface ProdutoPromocao {
+  preco: number;
+  /** 'YYYY-MM-DD' ou null quando o ERP não informa. */
+  inicio: string | null;
+  fim: string | null;
+  nome: string | null;
+}
+
 interface ProdutoCatalogo {
   cdproduto: number;
   descricao: string | null;
+  /** Descrição longa do ERP. Nunca vai para a vitrine pública (pode ter nota interna). */
+  observacao: string | null;
   grupo: string | null;
+  /** Só presente quando o ERP informa a unidade (Linear). */
+  unidade?: string | null;
+  /**
+   * Só presente quando o ERP informa promoção (Linear). `null` = "o ERP
+   * controla ofertas e este produto não está em nenhuma", que é diferente de
+   * ausente ("este ERP não informa oferta" — o servidor não mexe no campo).
+   */
+  promocao?: ProdutoPromocao | null;
   codigos_barra: string[];
   precos: ProdutoPreco[];
   estoque: ProdutoEstoque[];
@@ -158,6 +197,7 @@ export {
   ZapRunShopRow,
   ProdutoPreco,
   ProdutoEstoque,
+  ProdutoPromocao,
   ProdutoCatalogo,
   ResultadoAgrupamento,
   PayloadSync,

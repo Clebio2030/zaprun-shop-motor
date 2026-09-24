@@ -15,7 +15,6 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
 const express = require('express');
-const firebird = require('node-firebird');
 
 const { logInfo, logError } = require('./logger');
 const {
@@ -24,10 +23,8 @@ const {
   ensureUpdaterHealthUrl
 } = require('./ensureUpdaterSchedule');
 const { snapshotState } = require('./motor/syncState');
-const { estadoDasViews } = require('./motor/migrations');
-const { lerColunas, TABELAS_PADRAO } = require('./motor/schema');
-const { extrairProdutos } = require('./motor/extractor');
-const { apenasContrato, VIEW_SHOP } = require('./motor/mapping');
+const { erp, tipoErp } = require('./motor/erp');
+const { apenasContrato } = require('./motor/mapping');
 
 // Sobe o motor (cron + primeiro ciclo).
 const { runMotor, estadoDoMotor } = require('./motor');
@@ -37,60 +34,36 @@ const PORT = process.env.PORT || 3010;
 
 app.use(express.json());
 
-// ── Firebird ─────────────────────────────────────────────────────────────────
-
-function opcoesFirebird() {
-  return {
-    host: process.env.FB_HOST || '127.0.0.1',
-    port: Number(process.env.FB_PORT || 3050),
-    database: process.env.FB_DATABASE || '',
-    user: process.env.FB_USER || 'SYSDBA',
-    password: process.env.FB_PASSWORD || 'masterkey',
-    lowercase_keys: true,
-    role: null,
-    pageSize: 4096,
-    charset: process.env.FB_CHARSET || 'WIN1252'
-  };
-}
-
 /**
- * Conexão própria (fora do pool do motor) porque isto é um teste de vida: se o
- * pool estiver saturado por uma extração em andamento, o health check deve
- * responder mesmo assim — senão o updater interpretaria "ocupado" como
- * "quebrado" e faria rollback de uma versão sadia.
+ * Teste de vida do banco do ERP desta máquina (Firebird no Automec, MySQL pela
+ * VPN no Linear). Nunca lança: ERP_TIPO inválido também é "banco com erro",
+ * com o motivo — é o que o /status precisa mostrar.
+ *
+ * @returns {Promise<{ ok: boolean, erro?: string }>}
  */
-function testarFirebird() {
-  return new Promise(resolve => {
-    const opcoes = opcoesFirebird();
-    if (!opcoes.database) return resolve(false);
-
-    firebird.attach(/** @type {any} */ (opcoes), (err, db) => {
-      if (err) {
-        logError('[ZapRun] Falha ao conectar no Firebird', err);
-        return resolve(false);
-      }
-      db.query('SELECT 1 FROM RDB$DATABASE', [], errQ => {
-        db.detach();
-        if (errQ) {
-          logError('[ZapRun] Falha na query de teste do Firebird', errQ);
-          return resolve(false);
-        }
-        resolve(true);
-      });
-    });
-  });
+async function testarBanco() {
+  try {
+    return await erp().testarConexao();
+  } catch (err) {
+    return { ok: false, erro: err.message };
+  }
 }
 
 // ── Rotas ────────────────────────────────────────────────────────────────────
 
 // O updater espera 200 aqui depois de atualizar; qualquer outra coisa dispara
-// rollback. Por isso responde 200 mesmo com o Firebird fora: banco caído é
+// rollback. Por isso responde 200 mesmo com o banco do ERP fora: banco caído é
 // problema do cliente, não da versão que acabou de subir — reverter o código
 // não consertaria e ainda desfaria uma atualização boa.
 app.get('/health', async (_req, res) => {
+  const banco = (await testarBanco()).ok ? 'ok' : 'error';
   res.json({
     status: 'ok',
-    firebird: (await testarFirebird()) ? 'ok' : 'error',
+    erp: tipoErp(),
+    banco,
+    // `firebird` continua existindo para o Automec: é o campo que o
+    // INSTALAR.bat de versões anteriores lê na verificação final.
+    ...(tipoErp() === 'automec' ? { firebird: banco } : {}),
     uptime: process.uptime(),
     timestamp: new Date().toISOString()
   });
@@ -98,15 +71,26 @@ app.get('/health', async (_req, res) => {
 
 app.get('/status', async (_req, res) => {
   const token = process.env.ZAPRUN_TOKEN || '';
+  const banco = await testarBanco();
+  /** @type {any} */
+  let adaptador = null;
+  try {
+    adaptador = erp();
+  } catch (err) {
+    // ERP_TIPO inválido: o /status ainda responde, com o motivo em `banco`.
+  }
   res.json({
     ...estadoDoMotor(),
     apiUrl: process.env.ZAPRUN_API_URL || 'https://dev.zaprun.com.br',
     // Só o prefixo: o token em claro não pode vazar num log ou print de tela.
     token: token ? `${token.slice(0, 12)}...` : '(não configurado)',
-    firebird: (await testarFirebird()) ? 'ok' : 'error',
-    database: process.env.FB_DATABASE || '(não configurado)',
+    erpNome: adaptador ? adaptador.nome : '(ERP_TIPO inválido)',
+    // Com o motivo: "confira a VPN da Linear" resolve em 1 minuto o que
+    // "error" deixaria para uma sessão remota.
+    banco: banco.ok ? 'ok' : `erro: ${banco.erro || 'desconhecido'}`,
+    database: adaptador ? adaptador.descreverBanco() : '(não configurado)',
     // Por que a view falhou, e não só o sintoma "Table unknown" do ciclo.
-    views: estadoDasViews(),
+    views: adaptador ? adaptador.estadoDoPreparo() : null,
     sincronizacao: snapshotState()
   });
 });
@@ -138,25 +122,43 @@ app.get('/produtos', async (req, res) => {
   }
 
   try {
-    const { produtos, linhas, descartadas, foraDoEscopo } = await extrairProdutos(null, cdproduto);
+    const { produtos, linhas, descartadas, foraDoEscopo } = await erp().extrairProdutos(
+      null,
+      cdproduto
+    );
 
     if (cdproduto !== null && produtos.length === 0) {
       return res.status(404).json({
-        erro: `Produto ${cdproduto} não encontrado em ${VIEW_SHOP}.`,
+        erro: `Produto ${cdproduto} não encontrado em ${erp().origem}.`,
         _meta: { linhas, descartadas }
       });
     }
 
     res.json({
-      _meta: { view: VIEW_SHOP, linhas, produtos: produtos.length, descartadas, foraDoEscopo },
+      _meta: {
+        erp: tipoErp(),
+        view: erp().view,
+        origem: erp().origem,
+        linhas,
+        produtos: produtos.length,
+        descartadas,
+        foraDoEscopo
+      },
       produtos: produtos.map(apenasContrato)
     });
   } catch (err) {
     // A mensagem do Firebird vai inteira: "Table unknown ZAPRUN_SHOP" é a
     // resposta útil aqui, e escondê-la atrás de "erro interno" transformaria um
     // diagnóstico de 5 segundos numa sessão remota.
-    logError('[ZapRun] Falha ao ler a view de produtos', err);
-    res.status(500).json({ erro: err.message, view: VIEW_SHOP });
+    logError('[ZapRun] Falha ao ler o catálogo do ERP', err);
+    /** @type {any} */
+    let view = null;
+    try {
+      view = erp().view;
+    } catch (e) {
+      // ERP_TIPO inválido: a mensagem de `erro` já diz isso.
+    }
+    res.status(500).json({ erro: err.message, erp: tipoErp(), view });
   }
 });
 
@@ -177,8 +179,8 @@ app.get('/diagnostico/colunas', async (req, res) => {
     .filter(Boolean);
 
   try {
-    const colunas = await lerColunas(pedidas.length ? pedidas : TABELAS_PADRAO);
-    res.json({ database: process.env.FB_DATABASE || null, colunas });
+    const colunas = await erp().lerColunas(pedidas);
+    res.json({ erp: tipoErp(), database: erp().descreverBanco(), colunas });
   } catch (err) {
     logError('[ZapRun] Falha ao ler o schema do ERP', err);
     res.status(500).json({ erro: err.message });

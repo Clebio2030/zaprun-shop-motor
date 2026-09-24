@@ -35,6 +35,7 @@ os dois Motores.
 | `erpCompanyIds` | `IDEMPRESA` que este token pode enviar. `null` = todas. |
 | `cronExpr` | Ritmo do ciclo. Mudar aqui muda a frota inteira. |
 | `chunkSize` | Produtos por POST. |
+| `erpSistema` | Só no token do Shop. ERP escolhido no painel (`automec`, `linear`). O Motor compara com o `ERP_TIPO` dele e só **avisa** no log. |
 
 O Motor do Shop lê primeiro `cronExprShop` / `chunkSizeShop` e só depois cai nos
 campos genéricos. Assim o servidor pode dar ritmos diferentes aos dois Motores
@@ -78,11 +79,27 @@ próximo ciclo).
         { "cddeposito": 1005, "deposito": "DEPOSITO 2", "saldo": 0 }
       ],
       "erpCompanyId": 1,
-      "raw": { "QUALQUER_COLUNA_DA_VIEW": "..." }
+      "raw": { "QUALQUER_COLUNA_DA_VIEW": "..." },
+
+      // Só o Linear manda os dois abaixo (v1.1.0). Ver docs/06-linear.md.
+      "unidade": "KG",
+      "promocao": {                  // null = não está em promoção
+        "preco": 19.98,
+        "inicio": "2026-09-18",
+        "fim": "2026-09-30",
+        "nome": "2° QUINZ ANIVERSARIO"
+      }
     }
   ]
 }
 ```
+
+**`promocao` ausente ≠ `promocao: null`.** Ausente (Automec) = o ERP não informa
+oferta: o servidor não toca na caixinha "Ativar oferta", que é do lojista.
+Presente = o ERP controla a oferta: o servidor liga a caixinha, grava o preço
+"de" (`regularPrice`) e cobra o promocional quando a promoção vale hoje e é
+**menor** que o preço normal; senão desliga. O preço normal continua em
+`precos`.
 
 Só `cdproduto` é obrigatório. Tudo mais é opcional, e **`raw` guarda a primeira
 linha crua do produto** — coluna que o ERP traz e ainda não tem campo tipado no

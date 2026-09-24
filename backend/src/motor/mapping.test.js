@@ -119,6 +119,7 @@ test('produz exatamente a estrutura acordada', () => {
     {
       cdproduto: 8390,
       descricao: 'NOME DO PRODUTO',
+      observacao: null,
       grupo: 'NOME DO GRUPO',
       codigos_barra: ['7908572802578'],
       precos: [{ idpreco: 1, tabela: 'CARTAO', preco: 44.99 }],
@@ -187,6 +188,7 @@ test('produto sem código de barras, sem preço e sem estoque vira arrays vazios
   assert.deepStrictEqual(apenasContrato(produtos[0]), {
     cdproduto: 999,
     descricao: 'PRODUTO NOVO',
+    observacao: null,
     grupo: 'GERAL',
     codigos_barra: [],
     precos: [],
@@ -279,4 +281,32 @@ test('o produto entregue é JSON puro — nenhum Set/Map vaza do agrupamento', (
   ]);
   const roundtrip = JSON.parse(JSON.stringify(apenasContrato(produtos[0])));
   assert.deepStrictEqual(roundtrip, apenasContrato(produtos[0]));
+});
+
+// ── Unidade e promoção (Linear) ──────────────────────────────────────────────
+
+test('linha SEM as colunas de promoção não cria o campo — o Automec não muda', () => {
+  const { produtos } = agruparProdutos([{ CDPRODUTO: 1, PRODUTO_DESCRICAO: 'X', PRECO: 10 }]);
+  assert.strictEqual('promocao' in produtos[0], false);
+  assert.strictEqual('unidade' in produtos[0], false);
+});
+
+test('coluna de promoção presente e vazia vira promocao: null', () => {
+  const { produtos } = agruparProdutos([
+    { CDPRODUTO: 1, PRODUTO_DESCRICAO: 'X', PROMO_PRECO: null, UNIDADE: 'UN' }
+  ]);
+  assert.strictEqual(produtos[0].promocao, null);
+  assert.strictEqual(produtos[0].unidade, 'UN');
+});
+
+test('promoção de preço zero é "sem promoção", não oferta de graça', () => {
+  const { produtos } = agruparProdutos([{ CDPRODUTO: 1, PRODUTO_DESCRICAO: 'X', PROMO_PRECO: '0.000' }]);
+  assert.strictEqual(produtos[0].promocao, null);
+});
+
+test('data vazia do MySQL (0000-00-00) vira null', () => {
+  const { produtos } = agruparProdutos([
+    { CDPRODUTO: 1, PRODUTO_DESCRICAO: 'X', PROMO_PRECO: 5, PROMO_INICIO: '0000-00-00', PROMO_FIM: '2026-09-30' }
+  ]);
+  assert.deepStrictEqual(produtos[0].promocao, { preco: 5, inicio: null, fim: '2026-09-30', nome: null });
 });

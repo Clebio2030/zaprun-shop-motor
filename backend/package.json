@@ -1,11 +1,11 @@
 {
   "name": "zaprun-shop-motor",
-  "version": "1.0.0",
-  "description": "Motor ZapRun Shop — lê o catálogo de produtos do ERP (Firebird) na máquina do cliente e entrega no catálogo do ZapRun Shop",
+  "version": "1.1.0",
+  "description": "Motor ZapRun Shop — lê o catálogo de produtos do ERP (Automec/Firebird ou Linear/MySQL) na máquina do cliente e entrega no catálogo do ZapRun Shop",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test src/motor/*.test.js",
+    "test": "node --test src/motor/*.test.js src/motor/erp/*.test.js src/motor/erp/linear/*.test.js setup-env.test.js",
     "typecheck": "tsc --noEmit"
   },
   "author": "ZapRun",
@@ -16,6 +16,7 @@
     "axios": "^1.13.2",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "mysql2": "^3.24.4",
     "node-cron": "^4.2.1",
     "node-firebird": "^1.1.9"
   },
