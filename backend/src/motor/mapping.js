@@ -44,6 +44,8 @@
 //   IDEMPRESA            só em ERP multiempresa (ver agruparProdutos)
 //   PRODUTO_OBS          descrição longa
 //   UNIDADE              UN, KG — hoje só o Linear
+//   MULTCAIXA            metragem/quantidade por caixa (piso: 2,01 m²) — hoje
+//                        só o Automec. A PRESENÇA da coluna liga `multCaixa`
 //   PROMO_PRECO, PROMO_INICIO, PROMO_FIM, PROMO_NOME
 //                        promoção vigente — hoje só o Linear. A PRESENÇA da
 //                        coluna liga o campo `promocao` (ver mapPromocao)
@@ -216,6 +218,13 @@ function mapCabecalho(row, cdproduto) {
   // idêntico ao de antes, sem reenvio do catálogo inteiro na atualização.
   if (temColuna(row, 'UNIDADE')) produto.unidade = readTextOrNull(row, 'UNIDADE');
   if (temColuna(row, 'PROMO_PRECO')) produto.promocao = mapPromocao(row);
+  // Caixa fechada (piso vendido por m²). O Motor só relata o que o ERP diz:
+  // 0 ou nulo vira null ("não informado"); 1, 2,01, 0,98 (pastilha) vão como
+  // vieram. Quem decide que produto vende por caixa é o servidor.
+  if (temColuna(row, 'MULTCAIXA')) {
+    const mult = toNumber(col(row, 'MULTCAIXA'));
+    produto.multCaixa = mult !== null && mult > 0 ? Math.round(mult * 10000) / 10000 : null;
+  }
 
   return produto;
 }
@@ -476,6 +485,7 @@ function apenasContrato(produto) {
   // Mesma regra do mapCabecalho: só aparece quando o ERP informa.
   if (produto.unidade !== undefined) contrato.unidade = produto.unidade;
   if (produto.promocao !== undefined) contrato.promocao = produto.promocao;
+  if (produto.multCaixa !== undefined) contrato.multCaixa = produto.multCaixa;
   return contrato;
 }
 

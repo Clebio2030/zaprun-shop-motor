@@ -91,6 +91,16 @@
       (migrations.js captura o erro por comando e segue). A falha aparece no
       diagnóstico, não em produto sumido da vitrine.
 
+   6. MULTCAIXA é a metragem (ou quantidade) que vem numa CAIXA do produto.
+      Piso e revestimento são vendidos por m², mas só saem em caixa fechada:
+      o PISO ALFAGRES CALACATA GRIS de 2,01 m² por caixa vende 46,23 m²
+      (23 caixas), nunca 46. Exposta em 01/10/2026 para a ZAP-IA cotar em
+      múltiplos da caixa (ADR-204). A view entrega o número cru; quem decide
+      que produto vende por caixa (piso, porcelanato, revestimento) é o
+      servidor.
+      Se o ERP do cliente não tiver a coluna, o CREATE OR ALTER falha e o
+      Firebird mantém a view anterior, como na nota 5: nada some da vitrine.
+
    ── O CONTRATO ──────────────────────────────────────────────────────────────
 
    A view é PLANA e devolve o produto cartesiano dos LEFT JOINs:
@@ -114,7 +124,8 @@ CREATE OR ALTER VIEW ZAPRUN_SHOP(
     PRECO,
     CDDEPOSITO,
     DEPOSITO_DESCRICAO,
-    SALDO)
+    SALDO,
+    MULTCAIXA)
 AS
 SELECT
     p.cdproduto,
@@ -138,7 +149,9 @@ SELECT
     pp.preco,
     est.cddeposito,
     CAST(est.deposito_descricao AS VARCHAR(255) CHARACTER SET OCTETS),
-    COALESCE(est.saldo, 0)
+    COALESCE(est.saldo, 0),
+    /* Metragem por caixa — ver a nota 6 no topo. */
+    p.multcaixa
 FROM produto p
 
 /* 1. Códigos de barra (1:N) */

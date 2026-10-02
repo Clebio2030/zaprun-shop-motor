@@ -76,6 +76,8 @@ interface ZapRunShopRow {
 
   /** Unidade de venda (UN, KG). Só a consulta do Linear traz hoje. */
   UNIDADE?: ColunaTexto;
+  /** Metragem/quantidade por caixa (piso: 2,01 m²). Só o Automec, desde 01/10/2026. */
+  MULTCAIXA?: ColunaNumero;
 
   /**
    * Promoção vigente. Só a consulta do Linear traz hoje. A PRESENÇA da coluna
@@ -142,6 +144,11 @@ interface ProdutoCatalogo {
   grupo: string | null;
   /** Só presente quando o ERP informa a unidade (Linear). */
   unidade?: string | null;
+  /**
+   * Só presente quando a view traz MULTCAIXA (Automec). Metragem ou
+   * quantidade por caixa fechada, como o ERP informa; `null` = 0 ou vazio.
+   */
+  multCaixa?: number | null;
   /**
    * Só presente quando o ERP informa promoção (Linear). `null` = "o ERP
    * controla ofertas e este produto não está em nenhuma", que é diferente de

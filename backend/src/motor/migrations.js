@@ -15,6 +15,41 @@ const { logInfo, logWarn, logError } = require('../logger');
 
 const SQL_PATH = path.join(__dirname, '..', '..', '..', 'sql', 'views_zaprun_shop.sql');
 
+// Colunas que nem todo ERP tem. O Firebird recusa o CREATE OR ALTER inteiro no
+// primeiro nome que não existe — e numa instalação NOVA isso deixaria o
+// cliente sem view nenhuma. Sem a coluna, a view sobe com NULL no lugar dela e
+// o servidor segue com o que já sabe (ex.: a caixa escrita no nome do piso).
+const COLUNAS_OPCIONAIS = [
+  {
+    tabela: 'PRODUTO',
+    coluna: 'MULTCAIXA',
+    uso: /\bp\.multcaixa\b/gi,
+    nulo: 'CAST(NULL AS DOUBLE PRECISION)'
+  }
+];
+
+/**
+ * Troca, no SQL da view, cada coluna opcional que o ERP NÃO tem por NULL.
+ * Puro: recebe o mapa de lerColunas (ou null, se a leitura falhou — aí trata
+ * todas como ausentes, que é o lado seguro).
+ *
+ * @param {string} sql
+ * @param {Record<string, Array<{coluna:string}>>|null} colunas
+ * @returns {{ sql: string, ausentes: string[] }}
+ */
+function adaptarAoSchema(sql, colunas) {
+  let saida = sql;
+  const ausentes = [];
+  for (const c of COLUNAS_OPCIONAIS) {
+    const tem = !!colunas && (colunas[c.tabela] || []).some(x => String(x.coluna).toUpperCase() === c.coluna);
+    if (!tem) {
+      saida = saida.replace(c.uso, c.nulo);
+      ausentes.push(`${c.tabela}.${c.coluna}`);
+    }
+  }
+  return { sql: saida, ausentes };
+}
+
 /**
  * Remove comentários de bloco e de linha e devolve os comandos separados.
  *
@@ -40,7 +75,7 @@ function separarComandos(rawSql) {
 // cliente — e o /status dizia apenas "Table unknown" no ciclo seguinte, que é
 // a CONSEQUÊNCIA, não a causa. Quem diagnostica à distância precisa do erro
 // do Firebird, não do sintoma.
-/** @type {{estado:string, aplicados:number, falhas:number, erros:Array<any>, em?:string}} */
+/** @type {{estado:string, aplicados:number, falhas:number, erros:Array<any>, colunasAusentes?:string[], em?:string}} */
 let ultimaAplicacao = { estado: "nao-executado", aplicados: 0, falhas: 0, erros: [] };
 
 function estadoDasViews() {
@@ -59,7 +94,20 @@ async function runDatabaseMigrations() {
     return { aplicados: 0, falhas: 0 };
   }
 
-  const comandos = separarComandos(fs.readFileSync(SQL_PATH, 'utf8'));
+  // Colunas opcionais: confere no catálogo do Firebird (RDB$) antes de aplicar.
+  let colunas = null;
+  try {
+    // eslint-disable-next-line global-require
+    const { lerColunas } = require('./schema');
+    colunas = await lerColunas([...new Set(COLUNAS_OPCIONAIS.map(c => c.tabela))]);
+  } catch (err) {
+    logWarn(`[ZapRun] Não li o schema do ERP (${err && err.message}) — colunas opcionais vão como NULL.`);
+  }
+  const { sql: sqlAdaptado, ausentes } = adaptarAoSchema(fs.readFileSync(SQL_PATH, 'utf8'), colunas);
+  if (ausentes.length) {
+    logWarn(`[ZapRun] Coluna(s) opcional(is) ausente(s) no ERP: ${ausentes.join(', ')} — a view sobe com NULL no lugar.`);
+  }
+  const comandos = separarComandos(sqlAdaptado);
   if (comandos.length === 0) {
     logWarn('[ZapRun] views_zaprun_shop.sql está vazio — nenhuma view aplicada.');
     ultimaAplicacao = { estado: 'arquivo-vazio', aplicados: 0, falhas: 0, erros: [] };
@@ -91,6 +139,7 @@ async function runDatabaseMigrations() {
     aplicados,
     falhas,
     erros,
+    colunasAusentes: ausentes,
     em: new Date().toISOString()
   };
 
@@ -98,4 +147,4 @@ async function runDatabaseMigrations() {
   return { aplicados, falhas };
 }
 
-module.exports = { runDatabaseMigrations, separarComandos, estadoDasViews, SQL_PATH };
+module.exports = { runDatabaseMigrations, separarComandos, estadoDasViews, adaptarAoSchema, COLUNAS_OPCIONAIS, SQL_PATH };

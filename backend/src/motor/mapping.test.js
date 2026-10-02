@@ -299,6 +299,24 @@ test('coluna de promoção presente e vazia vira promocao: null', () => {
   assert.strictEqual(produtos[0].unidade, 'UN');
 });
 
+test('MULTCAIXA: vai como o ERP diz; 0 e nulo viram null; sem coluna, sem campo', () => {
+  const { produtos } = agruparProdutos([
+    { CDPRODUTO: 1, PRODUTO_DESCRICAO: 'PISO 45X45 2,01MT', MULTCAIXA: 2.01 },
+    { CDPRODUTO: 2, PRODUTO_DESCRICAO: 'CIMENTO', MULTCAIXA: 1 },
+    { CDPRODUTO: 3, PRODUTO_DESCRICAO: 'AREIA', MULTCAIXA: 0 },
+    { CDPRODUTO: 4, PRODUTO_DESCRICAO: 'TELHA', MULTCAIXA: null },
+    { CDPRODUTO: 5, PRODUTO_DESCRICAO: 'PREGO' }
+  ]);
+  const por = Object.fromEntries(produtos.map(p => [p.cdproduto, p]));
+  assert.strictEqual(por[1].multCaixa, 2.01);
+  assert.strictEqual(por[2].multCaixa, 1);
+  assert.strictEqual(por[3].multCaixa, null);
+  assert.strictEqual(por[4].multCaixa, null);
+  assert.strictEqual('multCaixa' in por[5], false);
+  assert.strictEqual(apenasContrato(por[1]).multCaixa, 2.01);
+  assert.strictEqual('multCaixa' in apenasContrato(por[5]), false);
+});
+
 test('promoção de preço zero é "sem promoção", não oferta de graça', () => {
   const { produtos } = agruparProdutos([{ CDPRODUTO: 1, PRODUTO_DESCRICAO: 'X', PROMO_PRECO: '0.000' }]);
   assert.strictEqual(produtos[0].promocao, null);

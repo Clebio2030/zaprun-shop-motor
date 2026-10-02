@@ -81,6 +81,10 @@ próximo ciclo).
       "erpCompanyId": 1,
       "raw": { "QUALQUER_COLUNA_DA_VIEW": "..." },
 
+      // Só o Automec manda (v1.2.0): metragem por caixa fechada (piso).
+      // null = não vende por caixa. Ausente = a view não tem a coluna.
+      "multCaixa": 2.01,
+
       // Só o Linear manda os dois abaixo (v1.1.0). Ver docs/06-linear.md.
       "unidade": "KG",
       "promocao": {                  // null = não está em promoção
