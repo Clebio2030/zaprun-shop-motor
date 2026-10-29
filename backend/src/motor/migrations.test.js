@@ -9,21 +9,28 @@ const { adaptarAoSchema, separarComandos, SQL_PATH } = require('./migrations');
 const VIEW = fs.readFileSync(SQL_PATH, 'utf8');
 
 test('ERP COM a coluna MULTCAIXA: a view usa p.multcaixa', () => {
-  const { sql, ausentes } = adaptarAoSchema(VIEW, { PRODUTO: [{ coluna: 'CDPRODUTO' }, { coluna: 'MULTCAIXA' }] });
+  const { sql, ausentes } = adaptarAoSchema(VIEW, { PRODUTO: [{ coluna: 'CDPRODUTO' }, { coluna: 'MEMOOBS' }, { coluna: 'MULTCAIXA' }] });
   assert.deepStrictEqual(ausentes, []);
   assert.match(separarComandos(sql).join('\n'), /p\.multcaixa/);
 });
 
 test('ERP SEM a coluna: a view sobe com NULL no lugar, e a coluna MULTCAIXA continua na lista', () => {
   const { sql, ausentes } = adaptarAoSchema(VIEW, { PRODUTO: [{ coluna: 'CDPRODUTO' }] });
-  assert.deepStrictEqual(ausentes, ['PRODUTO.MULTCAIXA']);
+  assert.deepStrictEqual(ausentes, ['PRODUTO.MEMOOBS', 'PRODUTO.MULTCAIXA']);
   const comando = separarComandos(sql).join('\n');
   assert.doesNotMatch(comando, /p\.multcaixa/i);
   assert.match(comando, /CAST\(NULL AS DOUBLE PRECISION\)/);
+  assert.doesNotMatch(comando, /p\.memoobs/i);
   assert.match(comando, /MULTCAIXA\)/);
 });
 
 test('schema ilegível (null): trata como ausente — o lado seguro', () => {
   const { ausentes } = adaptarAoSchema(VIEW, null);
-  assert.deepStrictEqual(ausentes, ['PRODUTO.MULTCAIXA']);
+  assert.deepStrictEqual(ausentes, ['PRODUTO.MEMOOBS', 'PRODUTO.MULTCAIXA']);
+});
+
+test('base com MEMOBS (um O só): a view usa p.memobs, sem NULL', () => {
+  const { sql, ausentes } = adaptarAoSchema(VIEW, { PRODUTO: [{ coluna: 'MEMOBS' }, { coluna: 'MULTCAIXA' }] });
+  assert.deepStrictEqual(ausentes, []);
+  assert.match(separarComandos(sql).join('\n'), /p\.memobs/);
 });

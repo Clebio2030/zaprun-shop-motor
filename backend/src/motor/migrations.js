@@ -22,6 +22,12 @@ const SQL_PATH = path.join(__dirname, '..', '..', '..', 'sql', 'views_zaprun_sho
 const COLUNAS_OPCIONAIS = [
   {
     tabela: 'PRODUTO',
+    coluna: 'MEMOOBS',
+    uso: /\bp\.memoobs\b/gi,
+    nulo: 'CAST(NULL AS VARCHAR(500))'
+  },
+  {
+    tabela: 'PRODUTO',
     coluna: 'MULTCAIXA',
     uso: /\bp\.multcaixa\b/gi,
     nulo: 'CAST(NULL AS DOUBLE PRECISION)'
@@ -40,9 +46,15 @@ const COLUNAS_OPCIONAIS = [
 function adaptarAoSchema(sql, colunas) {
   let saida = sql;
   const ausentes = [];
+  const existe = (tabela, coluna) =>
+    !!colunas && (colunas[tabela] || []).some(x => String(x.coluna).toUpperCase() === coluna);
+  // Algumas bases Automec (ex.: VonixxPB) chamam a descrição de MEMOBS, com um
+  // O só. Se MEMOOBS não existe mas MEMOBS existe, usa ela em vez de NULL.
+  if (!existe('PRODUTO', 'MEMOOBS') && existe('PRODUTO', 'MEMOBS')) {
+    saida = saida.replace(/\bp\.memoobs\b/gi, 'p.memobs');
+  }
   for (const c of COLUNAS_OPCIONAIS) {
-    const tem = !!colunas && (colunas[c.tabela] || []).some(x => String(x.coluna).toUpperCase() === c.coluna);
-    if (!tem) {
+    if (!existe(c.tabela, c.coluna) && !(c.coluna === 'MEMOOBS' && existe('PRODUTO', 'MEMOBS'))) {
       saida = saida.replace(c.uso, c.nulo);
       ausentes.push(`${c.tabela}.${c.coluna}`);
     }
