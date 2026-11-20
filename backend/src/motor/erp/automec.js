@@ -75,7 +75,7 @@ module.exports = {
   listarEmpresasDoErp,
   testarConexao,
   lerColunas: (tabelas = []) => lerColunas(tabelas.length ? tabelas : TABELAS_PADRAO),
-  // Pedido da Loja → orçamento (ADR-306). Carregado sob demanda: quem não liga
+  // Pedido da Loja → orçamento (ADR-307). Carregado sob demanda: quem não liga
   // o recurso nunca abre conexão de escrita.
   sincronizarPedido: (pedido, config, modo) =>
     require('./automec-orcamento').sincronizarPedido(pedido, config, modo),

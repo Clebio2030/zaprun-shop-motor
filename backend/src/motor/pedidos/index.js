@@ -1,5 +1,5 @@
 // motor/pedidos/index.js
-// Laço de PEDIDOS: o pedido da Loja vira orçamento no ERP (ADR-306 do ZapRun).
+// Laço de PEDIDOS: o pedido da Loja vira orçamento no ERP (ADR-307 do ZapRun).
 //
 // Independente do cron do catálogo — a extração do catálogo pode levar
 // minutos, e um pedido não pode esperar por ela. Um setTimeout encadeado (e não

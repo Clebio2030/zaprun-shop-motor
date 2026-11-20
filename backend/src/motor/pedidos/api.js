@@ -1,5 +1,5 @@
 // motor/pedidos/api.js
-// As duas chamadas do laço de pedidos (ADR-306 do ZapRun):
+// As duas chamadas do laço de pedidos (ADR-307 do ZapRun):
 //   POST /erp/pedidos/consultar   estado do Motor → config + pedidos a levar ao ERP
 //   POST /erp/pedidos/resultado   o que aconteceu com cada pedido
 //

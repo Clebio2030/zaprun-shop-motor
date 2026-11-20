@@ -1,5 +1,5 @@
 // tools/fb-teste/testar-orcamento.js
-// Teste de integração da gravação de orçamento (ADR-306) contra um Firebird DE
+// Teste de integração da gravação de orçamento (ADR-307) contra um Firebird DE
 // TESTE — nunca contra o banco de um cliente.
 //
 //   docker run -d --name zr-fb-teste -p 127.0.0.1:3055:3050 -e ISC_PASSWORD=masterkey jacobalberty/firebird:v4.0

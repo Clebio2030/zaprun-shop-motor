@@ -28,7 +28,7 @@ const { apenasContrato } = require('./motor/mapping');
 
 // Sobe o motor (cron + primeiro ciclo).
 const { runMotor, estadoDoMotor } = require('./motor');
-// Pedido da Loja → orçamento no ERP (ADR-306). O laço sobe com o servidor.
+// Pedido da Loja → orçamento no ERP (ADR-307). O laço sobe com o servidor.
 const {
   iniciarPedidos,
   consultarAgora,

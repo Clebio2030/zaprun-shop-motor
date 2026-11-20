@@ -1,5 +1,5 @@
 // motor/erp/automec-orcamento.js
-// Pedido da Loja → ORÇAMENTO no Automec (ADR-306 do ZapRun).
+// Pedido da Loja → ORÇAMENTO no Automec (ADR-307 do ZapRun).
 //
 // O servidor manda o ESTADO DESEJADO do orçamento (itens, valores, cliente,
 // entrega, observação). Aqui fica só o que depende do banco do cliente:

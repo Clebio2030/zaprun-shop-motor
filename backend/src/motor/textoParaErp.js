@@ -1,5 +1,5 @@
 // motor/textoParaErp.js
-// Texto que o Motor GRAVA no ERP (pedido → orçamento, ADR-306 do ZapRun).
+// Texto que o Motor GRAVA no ERP (pedido → orçamento, ADR-307 do ZapRun).
 //
 // É o espelho de encoding.js, que trata a LEITURA. O problema é o mesmo, do
 // outro lado:

@@ -241,7 +241,7 @@ GET /produtos?cdproduto=8390   um produto
 
 ---
 
-## Pedidos da Loja → orçamento no ERP (v1.3.0, ADR-306 do ZapRun)
+## Pedidos da Loja → orçamento no ERP (v1.3.0, ADR-307 do ZapRun)
 
 Segundo laço do Motor, independente do catálogo (`backend/src/motor/pedidos/`).
 Só o **Automec** grava; o Linear responde "não suportado". Desligado por

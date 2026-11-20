@@ -1,5 +1,5 @@
 // motor/firebirdEscrita.js
-// Conexão de ESCRITA no Firebird do ERP — a gravação de orçamento (ADR-306 do
+// Conexão de ESCRITA no Firebird do ERP — a gravação de orçamento (ADR-307 do
 // ZapRun). Separada do pool de leitura (firebird.js) de propósito:
 //
 //  - a extração do catálogo pode segurar uma conexão do pool por minutos; um

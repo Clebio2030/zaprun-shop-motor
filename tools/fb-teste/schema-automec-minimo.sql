@@ -1,4 +1,4 @@
-/* Schema MÍNIMO do Automec para testar a gravação de orçamento (ADR-306).
+/* Schema MÍNIMO do Automec para testar a gravação de orçamento (ADR-307).
    Não é o schema real: são as colunas que as views dos clientes (Freitas,
    Fimade, Ligeirinho) e o srvPDV.Web da Pontual mostram existir, em
    CHARACTER SET NONE como no cliente. Serve ao tools/fb-teste/testar-orcamento.js.
