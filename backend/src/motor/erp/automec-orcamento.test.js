@@ -43,3 +43,12 @@ test('HORAORC no zero do Delphi quando o Automec guarda assim', () => {
   assert.strictEqual(d.HORAORC.getFullYear(), 1899);
   assert.strictEqual(d.DTORC.getHours(), 0);
 });
+
+test('regra copiada do Automec da casa para CALC/QTDELIB/QTDEPECA', () => {
+  const { valorDaRegra } = require('./automec-orcamento');
+  assert.strictEqual(valorDaRegra('qtd', 2.5), 2.5);
+  assert.strictEqual(valorDaRegra('zero', 2.5), 0);
+  assert.strictEqual(valorDaRegra('nulo', 2.5), null);
+  assert.strictEqual(valorDaRegra('um', 2.5), 1);
+  assert.strictEqual(valorDaRegra(undefined, 3), 3, 'sem regra, a quantidade (como a Pontual)');
+});

@@ -80,5 +80,9 @@ module.exports = {
   sincronizarPedido: (pedido, config, modo) =>
     require('./automec-orcamento').sincronizarPedido(pedido, config, modo),
   relatorioPedidos: config => require('./automec-orcamento').relatorio(config),
+  // Em modo Gravar, a coluna ORCAMENTO.ZR_PEDIDO nasce já na consulta em que
+  // o painel liga — e não só no primeiro pedido: a loja precisa conferir a
+  // tela de orçamento do Automec ANTES de chegar pedido de verdade.
+  prepararPedidos: modo => require('./automec-orcamento').garantirColunaZr(modo),
   esquecerCachesPedidos: () => require('./automec-orcamento').esquecerCaches()
 };

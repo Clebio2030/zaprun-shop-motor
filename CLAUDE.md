@@ -100,6 +100,8 @@ O Motor também **escreve** no Automec: o pedido da Loja vira orçamento
 | Gravar cabeçalho e itens pelo pool (`firebird.js`) | autocommit por comando: orçamento pela metade. Use `firebirdEscrita.comTransacao` |
 | Criar `ZR_PEDIDO` no boot | o DDL só acontece em modo Gravar, para quem ligou o recurso |
 | Recriar orçamento que sumiu do ERP | a loja excluiu de propósito — responda `removido` |
+| Criar `ZR_PEDIDO` só no primeiro pedido | a loja não consegue conferir a tela do Automec antes do pedido real, e um pedido barrado no servidor deixa a coluna sem nascer (visto 19/11). Crie na consulta em modo Gravar |
+| Valor fixo da Pontual em CALC/QTDELIB | o Automec da casa preenche diferente (JPR: QTDELIB = quantidade em 0 de 200 itens). Copie a convenção dos últimos itens |
 
 ## Release
 

@@ -91,6 +91,7 @@ function estadoParaServidor() {
     suportado: !!adaptador(),
     modo: estado.modo,
     validacao: ultimaValidacao,
+    colunaZr: estado.colunaZr === undefined ? null : estado.colunaZr,
     pendentesDeConfirmacao: pendentes.length,
     ultimoErro: estado.ultimoErro
   };
@@ -205,6 +206,26 @@ async function rodarUmaVez() {
       if (typeof a.esquecerCachesPedidos === 'function') a.esquecerCachesPedidos();
     }
     logarSituacao(`Pedidos → orçamento LIGADO, modo ${estado.modo.toUpperCase()}, consulta a cada ${proxima / 1000}s.`);
+
+    // Modo Gravar: a coluna ORCAMENTO.ZR_PEDIDO nasce JÁ, e não só no primeiro
+    // pedido — a loja precisa conferir a tela de orçamento do Automec antes de
+    // chegar pedido de verdade. Com a coluna criada, nada acontece aqui (o
+    // schema fica em cache).
+    if (estado.modo === 'gravar' && typeof a.prepararPedidos === 'function') {
+      try {
+        const zr = await a.prepararPedidos('gravar');
+        estado.colunaZr = true;
+        if (zr && zr.criadaAgora) {
+          // O painel precisa ver "criada": o relatório vai de novo na próxima consulta.
+          relatorioEnviado = false;
+          logInfo('[Pedidos] Confira agora se a tela de orçamento do Automec continua abrindo e gravando normalmente.');
+        }
+      } catch (err) {
+        estado.colunaZr = false;
+        estado.ultimoErro = `coluna ZR_PEDIDO: ${err.message}`;
+        logarSituacao(`Não consegui criar a coluna ORCAMENTO.ZR_PEDIDO: ${err.message} — tento de novo na próxima consulta.`, 'warn');
+      }
+    }
 
     const pedidos = Array.isArray(dados.pedidos) ? dados.pedidos : [];
     if (!pedidos.length) {

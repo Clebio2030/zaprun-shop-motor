@@ -178,8 +178,51 @@ function aplicarExtras(valores, extras, modalidade) {
 
 // ── Datas no jeito do Automec ────────────────────────────────────────────────
 
-/** @type {{ em: number, horaBase1899: boolean, dataComHora: boolean } | null} */
+/** @type {{ em: number, horaBase1899: boolean, dataComHora: boolean, itens: Record<string, any> } | null} */
 let _convencao = null;
+
+// Colunas do ORCPROD cujo valor a Pontual chuta (= quantidade) e que o
+// Automec de cada cliente preenche do seu jeito. Na JPR (relatório de
+// 19/11) CALC = QTDPRODUTO em 2 de 200 itens e QTDELIB em 0 de 200: copiar a
+// Pontual punha no orçamento um valor que o próprio Automec nunca põe.
+const COLUNAS_COPIADAS = ['CALC', 'QTDELIB', 'QTDEPECA'];
+const PARCELA_MINIMA = 0.8;
+
+/** Valor de uma coluna de item pela regra lida dos orçamentos da casa. */
+function valorDaRegra(regra, quantidade) {
+  if (regra === 'zero') return 0;
+  if (regra === 'nulo') return null;
+  if (regra === 'um') return 1;
+  return quantidade;
+}
+
+/**
+ * Como o Automec da casa preenche CALC, QTDELIB e QTDEPECA nos últimos 200
+ * itens da empresa: igual à quantidade, zero, nulo ou um. Só adota a regra
+ * que aparece em 80% ou mais; sem maioria clara, fica a quantidade (Pontual)
+ * e o relatório mostra que não deu para decidir.
+ */
+async function lerRegrasDosItens(schema, idEmpresa) {
+  const p = schema.tabelas.ORCPROD;
+  /** @type {Record<string, any>} */
+  const regras = {};
+  if (!p.QTDPRODUTO) return regras;
+  for (const col of COLUNAS_COPIADAS) {
+    if (!p[col]) continue;
+    const [c] = await executar(
+      `SELECT COUNT(*) AS Q, SUM(IIF(${col} = QTDPRODUTO, 1, 0)) AS QTD, SUM(IIF(${col} = 0, 1, 0)) AS ZERO,
+              SUM(IIF(${col} IS NULL, 1, 0)) AS NULO, SUM(IIF(${col} = 1, 1, 0)) AS UM
+         FROM (SELECT FIRST 200 ${col}, QTDPRODUTO FROM ORCPROD WHERE IDEMPRESA = ? ORDER BY NRORCAMENTO DESC)`,
+      [idEmpresa]
+    );
+    const total = Number(c && c.q) || 0;
+    const contagem = { qtd: Number(c && c.qtd) || 0, zero: Number(c && c.zero) || 0, nulo: Number(c && c.nulo) || 0, um: Number(c && c.um) || 0 };
+    const [regra, vezes] = Object.entries(contagem).sort((a, b) => b[1] - a[1])[0];
+    const decidiu = total >= 10 && vezes / total >= PARCELA_MINIMA;
+    regras[col] = { regra: decidiu ? regra : 'qtd', decidiu, amostra: total, contagem };
+  }
+  return regras;
+}
 
 async function lerConvencao(schema, idEmpresa) {
   if (_convencao && Date.now() - _convencao.em < CACHE_SCHEMA_MS) return _convencao;
@@ -196,7 +239,8 @@ async function lerConvencao(schema, idEmpresa) {
       dataComHora = ultimo.dtorc.getHours() !== 0 || ultimo.dtorc.getMinutes() !== 0;
     }
   }
-  _convencao = { em: Date.now(), horaBase1899, dataComHora };
+  const itens = await lerRegrasDosItens(schema, idEmpresa);
+  _convencao = { em: Date.now(), horaBase1899, dataComHora, itens };
   return _convencao;
 }
 
@@ -375,7 +419,13 @@ async function validarConfig(config) {
   if (!Object.keys(schema.tabelas.ORCAMENTO).length) erros.push('A tabela ORCAMENTO não existe neste banco.');
   if (!Object.keys(schema.tabelas.ORCPROD).length) erros.push('A tabela ORCPROD não existe neste banco.');
 
-  const resultado = { ok: erros.length === 0, erros, nomes };
+  // Não bloqueia (cada loja chama o frete de um jeito), mas o painel mostra:
+  // na JPR o código 90 era "EMENDA CALHA AMANCO PLUVIAL".
+  const avisos = [];
+  if (nomes.frete && !/FRETE|ENTREGA|TAXA|TRANSPORT|MOTOBOY|CARRETO|DELIVERY/i.test(nomes.frete)) {
+    avisos.push(`O produto de frete ${config.cdProdutoFrete} no ERP é "${nomes.frete}" — confira se o código está certo.`);
+  }
+  const resultado = { ok: erros.length === 0, erros, avisos, nomes };
   _validacao = { chave, em: Date.now(), resultado };
   return resultado;
 }
@@ -438,7 +488,8 @@ function linhasDoPedido(p) {
   return linhas;
 }
 
-async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modoTexto, avisos) {
+async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modoTexto, avisos, regras = {}) {
+  const regra = col => (regras[col] ? regras[col].regra : 'qtd');
   let posic = 0;
   for (const linha of linhasDoPedido(p)) {
     const produto = await lerProduto(tx, schema, linha.cdproduto);
@@ -457,19 +508,19 @@ async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modo
         QTDPRODUTO: linha.quantidade,
         VLUNIT: linha.valorUnitario,
         TOTAL: linha.total,
-        QTDEPECA: linha.quantidade,
+        QTDEPECA: valorDaRegra(regra('QTDEPECA'), linha.quantidade),
         STATUS: 'FF',
         CDDEPOSITO: produto.cddeposito,
         DESCONTO: 0,
         IDPRECO: linha.idpreco ?? produto.idpreco,
         ORDEM: 'A',
         SUBTOTAL: linha.total,
-        CALC: linha.quantidade,
+        CALC: valorDaRegra(regra('CALC'), linha.quantidade),
         VLBCICMS: 0, PERC_ICMS: 0, VLICMS: 0, PERC_REDUCAO: 0, VLBCST: 0,
         PERC_ST: 0, VLST: 0, PERC_REDUCAO_ST: 0, PERC_COMISS: 0,
         CDCLIENTE: cdCliente,
         HASH: '',
-        QTDELIB: linha.quantidade,
+        QTDELIB: valorDaRegra(regra('QTDELIB'), linha.quantidade),
         VLCUSTO: produto.vlcusto,
         PRAZOPRODUTO: '',
         RESUMO_OS: ''
@@ -611,7 +662,7 @@ async function reconciliar(tx, p, config, ctx) {
       .map(([c]) => c);
     if (faltam.length) ctx.avisos.push(`ORCAMENTO tem obrigatórias que o Motor não preenche: ${faltam.join(', ')}`);
     await tx.query(ins.sql, ins.params);
-    const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos);
+    const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens);
     return ctx.ensaio
       ? { acao: 'criado', nrPrevisto: nr, linhas, cdVendedor: String(vendedor), situacaoErp: 0 }
       : { acao: 'criado', nrOrcamento: nr, linhas, cdVendedor: String(vendedor), situacaoErp: 0 };
@@ -637,7 +688,7 @@ async function reconciliar(tx, p, config, ctx) {
   );
   await tx.query(up.sql, up.params);
   await tx.query('DELETE FROM ORCPROD WHERE NRORCAMENTO = ? AND IDEMPRESA = ?', [nr, ctx.idEmpresa]);
-  const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos);
+  const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens);
   return { acao: 'atualizado', nrOrcamento: nr, linhas, situacaoErp: 0 };
 }
 
@@ -672,6 +723,16 @@ async function relatorio(config) {
   try {
     const [m] = await executar('SELECT MAX(NRORCAMENTO) AS M, COUNT(*) AS Q FROM ORCAMENTO WHERE IDEMPRESA = ?', [idEmpresa]);
     saida.numeracao = { maior: m ? m.m : null, proximo: m && m.m !== null ? Number(m.m) + 1 : 1, orcamentos: m ? m.q : 0 };
+    // Os números dos orçamentos mais RECENTES pela data: se forem os maiores,
+    // o Automec numera por MAX+1 como o Motor; se forem de outra faixa, ele
+    // usa um gerador e o Motor precisa seguir o mesmo.
+    if (existe(schema, 'ORCAMENTO', 'DTORC')) {
+      const recentes = await executar(
+        'SELECT FIRST 5 NRORCAMENTO FROM ORCAMENTO WHERE IDEMPRESA = ? ORDER BY DTORC DESC, NRORCAMENTO DESC',
+        [idEmpresa]
+      );
+      saida.numeracao.recentesPorData = recentes.map(r => r.nrorcamento);
+    }
     const geradores = await executar(
       "SELECT TRIM(RDB$GENERATOR_NAME) AS N FROM RDB$GENERATORS WHERE RDB$GENERATOR_NAME CONTAINING 'ORC' AND COALESCE(RDB$SYSTEM_FLAG, 0) = 0"
     );
@@ -712,9 +773,21 @@ async function relatorio(config) {
       );
       saida.calibracao[col] = dist.slice(0, 5).map(d => ({ valor: d.v === null ? null : fixEncoding(d.v).trim(), qtd: d.q }));
     }
+    _convencao = null;
     const conv = await lerConvencao(schema, idEmpresa);
     saida.calibracao.horaBase1899 = conv.horaBase1899;
     saida.calibracao.dataComHora = conv.dataComHora;
+    saida.calibracao.itens = conv.itens;
+    for (const col of ['STATUS', 'ORDEM']) {
+      if (!schema.tabelas.ORCPROD[col]) continue;
+      const dist = await executar(
+        `SELECT CAST(${col} AS VARCHAR(20) CHARACTER SET OCTETS) AS V, COUNT(*) AS Q
+           FROM (SELECT FIRST 200 ${col} FROM ORCPROD WHERE IDEMPRESA = ? ORDER BY NRORCAMENTO DESC)
+          GROUP BY 1 ORDER BY 2 DESC`,
+        [idEmpresa]
+      );
+      saida.calibracao[`ORCPROD_${col}`] = dist.slice(0, 5).map(d => ({ valor: d.v === null ? null : fixEncoding(d.v).trim(), qtd: d.q }));
+    }
   } catch (err) {
     saida.calibracao.erro = err.message;
   }
@@ -738,12 +811,14 @@ function esquecerCaches() {
 
 module.exports = {
   sincronizarPedido,
+  garantirColunaZr,
   relatorio,
   esquecerCaches,
   // exportados para teste
   montarInsert,
   montarUpdate,
   aplicarExtras,
+  valorDaRegra,
   datasDoOrcamento,
   linhasDoPedido,
   cabecalhoVariavel,

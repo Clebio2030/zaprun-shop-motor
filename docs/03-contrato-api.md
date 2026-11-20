@@ -302,10 +302,18 @@ release.
 | Modo Ensaio | tudo igual, com ROLLBACK; devolve `nrPrevisto` |
 
 A ligação pedido ↔ orçamento é a coluna **`ORCAMENTO.ZR_PEDIDO`**, criada pelo
-Motor no primeiro ciclo em modo Gravar (`ALTER TABLE ORCAMENTO ADD ZR_PEDIDO
+Motor na primeira consulta em modo Gravar — sem esperar pedido (v1.3.1), para a
+loja conferir a tela de orçamento do Automec antes do primeiro pedido real (`ALTER TABLE ORCAMENTO ADD ZR_PEDIDO
 INTEGER`), depois de conferir que nenhuma procedure/trigger insere em ORCAMENTO
 sem listar colunas. Gravada na mesma transação: se o resultado não chegar ao
 servidor, a próxima consulta acha o orçamento pela coluna e não duplica.
+
+`CALC`, `QTDELIB` e `QTDEPECA` dos itens copiam o Automec da casa (v1.3.1): o
+Motor olha os últimos 200 itens da empresa e, se 80% ou mais têm o valor igual à
+quantidade, zero, nulo ou 1, grava igual; sem maioria, grava a quantidade (como
+a Pontual). Na JPR, CALC = quantidade em 2 de 200 e QTDELIB em 0 de 200 — copiar
+a Pontual punha nos itens um valor que o próprio Automec nunca põe. O relatório
+mostra a regra adotada em `calibracao.itens`. `extras` ainda sobrescreve.
 
 Para desfazer (só se a coluna atrapalhar o Automec): desligar no painel e
 `ALTER TABLE ORCAMENTO DROP ZR_PEDIDO`.

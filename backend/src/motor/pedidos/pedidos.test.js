@@ -57,3 +57,26 @@ test('descrição do log', () => {
   const linha = pedidos.descrever({ numero: 12, total: 62.85 }, { acao: 'criado', nrOrcamento: 7301, linhas: 3, duracaoMs: 40 });
   assert.strictEqual(linha, 'pedido #12: criado → orçamento 7301, 3 linha(s), R$ 62,85 (40 ms)');
 });
+
+test('modo Gravar cria a coluna de ligação já na consulta, sem esperar pedido', async () => {
+  let preparou = null;
+  api.consultar = async () => ({ ok: true, dados: { ativo: true, modo: 'gravar', intervaloSeg: 30, config: { idEmpresaErp: 2 }, pedidos: [] } });
+  automec.prepararPedidos = async modo => {
+    preparou = modo;
+    return { ok: true, criadaAgora: true };
+  };
+  await pedidos.rodarUmaVez();
+  assert.strictEqual(preparou, 'gravar');
+  assert.strictEqual(pedidos.estadoDosPedidos().colunaZr, true);
+});
+
+test('modo Ensaio não mexe no schema do ERP', async () => {
+  let preparou = false;
+  api.consultar = async () => ({ ok: true, dados: { ativo: true, modo: 'ensaio', intervaloSeg: 30, config: { idEmpresaErp: 3 }, pedidos: [] } });
+  automec.prepararPedidos = async () => {
+    preparou = true;
+    return { ok: true };
+  };
+  await pedidos.rodarUmaVez();
+  assert.strictEqual(preparou, false);
+});
