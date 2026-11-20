@@ -238,3 +238,84 @@ GET /produtos?cdproduto=8390   um produto
 | `400` | `cdproduto` não é inteiro — **sem tocar no banco** |
 | `404` | pediu um `cdproduto` que não existe na view |
 | `500` | erro do Firebird, com a mensagem original (`Table unknown ZAPRUN_SHOP`) |
+
+---
+
+## Pedidos da Loja → orçamento no ERP (v1.3.0, ADR-306 do ZapRun)
+
+Segundo laço do Motor, independente do catálogo (`backend/src/motor/pedidos/`).
+Só o **Automec** grava; o Linear responde "não suportado". Desligado por
+padrão — liga em **Loja > Integração ERP > 6. Pedidos no ERP**.
+
+### `POST /erp/pedidos/consultar` (a cada 30 s ligado, 5 min desligado)
+
+```jsonc
+// requisição
+{ "motorVersao": "1.3.0", "erp": "automec",
+  "estado": { "suportado": true, "modo": "gravar", "validacao": {...}, "pendentesDeConfirmacao": 0, "ultimoErro": null },
+  "relatorio": null }   // relatório do ERP: 1x por boot e a cada mudança de config
+
+// resposta — desligado
+{ "ativo": false, "intervaloSeg": 300 }
+
+// resposta — ligado
+{ "ativo": true, "modo": "ensaio|gravar", "intervaloSeg": 30,
+  "config": { "idEmpresaErp": 1, "cdClienteErp": 1, "cdVendedorPadrao": "1", "cdProdutoFrete": "90", "extras": null },
+  "pedidos": [ {
+    "pedidoId": 501, "numero": 12, "versao": "<updatedAt>", "hash": "<sha256>",
+    "criadoEm": "...", "cancelado": false, "nrOrcamento": null, "idEmpresaErp": 1, "vendedor": "7",
+    "cliente": { "nome": "*MARIA JOSÉ", "telefone": "83999990000", "cpf": null },
+    "modalidade": "entrega",
+    "entrega": { "logradouro": "RUA X, 100", "complemento": null, "bairro": "CENTRO", "cidade": "JOÃO PESSOA", "uf": "PB", "cep": "58000000" },
+    "itens": [ { "cdproduto": "1201", "descricao": "CERVEJA LATA", "quantidade": 3, "valorUnitario": 9.95, "total": 29.85, "idpreco": 2 } ],
+    "frete": { "cdproduto": "90", "descricao": "FRETE", "valor": 8 },
+    "desconto": 5, "subtotal": 67.85, "total": 62.85,
+    "observacao": "PEDIDO ZAPRUN #12 | ENTREGA | PAG: PIX"
+  } ] }
+```
+
+O servidor manda o **estado desejado**; o Motor reconcilia com o ERP. Texto
+(nome com asterisco, observação) é decidido no servidor — mudar é deploy, não
+release.
+
+### `POST /erp/pedidos/resultado`
+
+```jsonc
+{ "motorVersao": "1.3.0", "resultados": [ {
+    "pedidoId": 501, "versao": "...", "hash": "...", "ensaio": false,
+    "acao": "criado|atualizado|inalterado|cancelado|travado|removido|ignorado|erro",
+    "nrOrcamento": 7301, "nrPrevisto": null, "idEmpresaErp": 1, "cdVendedor": "7", "situacaoErp": 0,
+    "erro": null, "transitorio": false, "linhas": 3, "avisos": [], "duracaoMs": 120 } ] }
+// resposta: { "ok": true, "recebidos": 1 }  — o Motor só esquece quando bate
+```
+
+### O que o Motor faz no Firebird (uma transação por pedido)
+
+| Situação | Ação |
+|---|---|
+| Não existe + cancelado | `ignorado` |
+| Não existe | `MAX(NRORCAMENTO)+1` da empresa, **INSERT puro** em ORCAMENTO e ORCPROD (frete = última linha); colisão de número → numera de novo (3x) |
+| Existe, `STATUS ≠ 0` | `travado` — não mexe |
+| Existe + cancelado | `STATUS = 2` |
+| Existe | UPDATE do cabeçalho (sem número/data/hora/vendedor), DELETE + INSERT dos itens |
+| Número conhecido e a linha sumiu | `removido` — **não recria** |
+| Modo Ensaio | tudo igual, com ROLLBACK; devolve `nrPrevisto` |
+
+A ligação pedido ↔ orçamento é a coluna **`ORCAMENTO.ZR_PEDIDO`**, criada pelo
+Motor no primeiro ciclo em modo Gravar (`ALTER TABLE ORCAMENTO ADD ZR_PEDIDO
+INTEGER`), depois de conferir que nenhuma procedure/trigger insere em ORCAMENTO
+sem listar colunas. Gravada na mesma transação: se o resultado não chegar ao
+servidor, a próxima consulta acha o orçamento pela coluna e não duplica.
+
+Para desfazer (só se a coluna atrapalhar o Automec): desligar no painel e
+`ALTER TABLE ORCAMENTO DROP ZR_PEDIDO`.
+
+### Rotas locais
+
+```
+GET  /pedidos             estado do laço + os 50 últimos resultados
+POST /pedidos/consultar   consulta agora, sem esperar 30 s
+GET  /status              ganhou o bloco "pedidos"
+```
+
+Teste contra Firebird de teste: `tools/fb-teste/` (schema mínimo + 11 cenários).

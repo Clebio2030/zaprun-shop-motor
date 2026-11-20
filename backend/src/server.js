@@ -28,6 +28,13 @@ const { apenasContrato } = require('./motor/mapping');
 
 // Sobe o motor (cron + primeiro ciclo).
 const { runMotor, estadoDoMotor } = require('./motor');
+// Pedido da Loja → orçamento no ERP (ADR-306). O laço sobe com o servidor.
+const {
+  iniciarPedidos,
+  consultarAgora,
+  estadoDosPedidos,
+  ultimosResultados
+} = require('./motor/pedidos');
 
 const app = express();
 const PORT = process.env.PORT || 3010;
@@ -91,8 +98,21 @@ app.get('/status', async (_req, res) => {
     database: adaptador ? adaptador.descreverBanco() : '(não configurado)',
     // Por que a view falhou, e não só o sintoma "Table unknown" do ciclo.
     views: adaptador ? adaptador.estadoDoPreparo() : null,
-    sincronizacao: snapshotState()
+    sincronizacao: snapshotState(),
+    pedidos: estadoDosPedidos()
   });
+});
+
+// Pedidos que viraram (ou tentaram virar) orçamento desde o boot — o que o
+// Motor fez, com número do orçamento, avisos e erro do Firebird inteiro.
+app.get('/pedidos', (_req, res) => {
+  res.json({ estado: estadoDosPedidos(), ultimos: ultimosResultados() });
+});
+
+// Consulta o servidor agora, sem esperar os 30 s.
+app.post('/pedidos/consultar', (_req, res) => {
+  consultarAgora();
+  res.json({ ok: true, mensagem: 'Consulta disparada. Acompanhe em /pedidos.' });
 });
 
 // O catálogo como o Motor o enxerga: linhas planas da view já agrupadas em
@@ -204,6 +224,8 @@ if (require.main === module) {
     logInfo('================================================');
     logInfo(`  ZapRun Shop rodando em http://127.0.0.1:${PORT}`);
     logInfo('================================================');
+
+    iniciarPedidos();
 
     try {
       ensureUpdaterVersionFile();

@@ -86,6 +86,21 @@ empresa 1, mas a view só tem [3]".
 | `CURDATE()` na consulta do Linear | MySQL da Linear pode estar em UTC; às 21h de Brasília já é amanhã. Use a data da máquina, por parâmetro |
 | `CAST(pcb.codbarra AS VARCHAR(...))` puro, sem validar comprimento | ERPs costumam ter linha de `produto_codbarra` com o próprio CDPRODUTO no lugar do EAN — a busca automática de imagem então casa "10" com o código de outro produto qualquer, e a vitrine mostra a foto errada. Só deixe passar dígitos no comprimento de um código real (8, 12, 13, 14) |
 
+## Gravação de orçamento (v1.3.0)
+
+O Motor também **escreve** no Automec: o pedido da Loja vira orçamento
+(`motor/pedidos/` + `motor/erp/automec-orcamento.js`; contrato em
+`docs/03-contrato-api.md`). Regras desta trilha:
+
+| Armadilha | Consequência |
+|---|---|
+| `UPDATE OR INSERT ... MATCHING (NRORCAMENTO, IDEMPRESA)` (como a Pontual) | número colidido SOBRESCREVE o orçamento do balcão. Use INSERT puro + renumerar |
+| Parâmetro de texto sem `CAST(? AS VARCHAR(n) CHARACTER SET WIN1252)` | o node-firebird conecta em UTF8 e ignora `charset`: "É" vira `C3 89` e o Automec mostra "Ã‰" (`textoParaErp.js`) |
+| Texto maior que a coluna | "string right truncation" derruba o pedido inteiro — corte pelo tamanho lido do RDB$ |
+| Gravar cabeçalho e itens pelo pool (`firebird.js`) | autocommit por comando: orçamento pela metade. Use `firebirdEscrita.comTransacao` |
+| Criar `ZR_PEDIDO` no boot | o DDL só acontece em modo Gravar, para quem ligou o recurso |
+| Recriar orçamento que sumiu do ERP | a loja excluiu de propósito — responda `removido` |
+
 ## Release
 
 Código chega na frota por **release no GitHub**

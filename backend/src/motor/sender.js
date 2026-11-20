@@ -192,5 +192,10 @@ module.exports = {
   handshake,
   enviarProdutos,
   fatiarLote,
-  MAX_BYTES_POR_LOTE
+  MAX_BYTES_POR_LOTE,
+  // Reaproveitados pelo laço de pedidos (motor/pedidos/api.js).
+  getHeaders,
+  baseUrl,
+  ehTransitorio,
+  detalharErro
 };
