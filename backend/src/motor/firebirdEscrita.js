@@ -20,6 +20,30 @@ const TIMEOUT_COMANDO_MS = parseInt(process.env.FB_WRITE_TIMEOUT || '30000', 10)
 // isc_tpb_version3, isc_tpb_write, isc_tpb_nowait, isc_tpb_read_committed, isc_tpb_rec_version
 const TPB_ESCRITA = [3, 9, 7, 15, 17];
 
+/**
+ * O que passar ao db.transaction(), conforme a GERAÇÃO do node-firebird que
+ * está na máquina do cliente — o updater preserva o node_modules, então a
+ * frota não tem garantia de ter a 1.1.9 do package-lock:
+ *
+ *   1.x  recebe o TPB INTEIRO, com o byte de versão (a constante
+ *        ISOLATION_READ_COMMITTED da 1.x é [3, 9, 6, 15, 18]);
+ *   2.x  monta sozinho versão, escrita e espera, e só quer o isolamento
+ *        (a constante dele é [15, 18]). Passar o TPB inteiro ali vira
+ *        [3, 3, 9, ...] e o Firebird lê o segundo 3 como "reserva de
+ *        tabela": "isc_tpb_shared requires table name before in TPB" —
+ *        exatamente o erro da primeira loja (JPR, 19/11).
+ *
+ * Detecta pela forma da constante em vez da versão do pacote: é ela que diz
+ * como o driver monta o TPB.
+ *
+ * @param {any} [driver]
+ */
+function parametrosDaTransacao(driver = firebird) {
+  const referencia = driver && driver.ISOLATION_READ_COMMITTED;
+  if (Array.isArray(referencia) && referencia[0] === 3) return TPB_ESCRITA;
+  return { isolation: [15, 17], readOnly: false, wait: false };
+}
+
 function opcoes() {
   return {
     host: process.env.FB_HOST || '127.0.0.1',
@@ -65,7 +89,7 @@ async function comTransacao(fn, opcoesTx = {}) {
   const db = await conectar();
   try {
     const transacao = await new Promise((resolve, reject) => {
-      db.transaction(TPB_ESCRITA, (err, tx) => (err ? reject(err) : resolve(tx)));
+      db.transaction(parametrosDaTransacao(), (err, tx) => (err ? reject(err) : resolve(tx)));
     });
     const t = /** @type {any} */ (transacao);
     const tx = {
@@ -146,4 +170,23 @@ function ehTransitorio(err) {
   return /lock conflict|deadlock|update conflicts|ECONNREFUSED|ECONNRESET|ETIMEDOUT|Connection is closed/i.test(String(err && err.message));
 }
 
-module.exports = { comTransacao, executar, ehViolacaoDeUnicidade, ehTransitorio, TPB_ESCRITA };
+/** Qual geração do driver está nesta máquina — vai no relatório e no /status. */
+function geracaoDoDriver(driver = firebird) {
+  let versao = null;
+  try {
+    versao = require('node-firebird/package.json').version;
+  } catch (e) {
+    // pacote sem package.json exportado: fica só a geração
+  }
+  return { versao, geracao: parametrosDaTransacao(driver) === TPB_ESCRITA ? '1.x' : '2.x' };
+}
+
+module.exports = {
+  comTransacao,
+  executar,
+  ehViolacaoDeUnicidade,
+  ehTransitorio,
+  parametrosDaTransacao,
+  geracaoDoDriver,
+  TPB_ESCRITA
+};

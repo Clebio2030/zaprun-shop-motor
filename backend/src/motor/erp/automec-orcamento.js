@@ -18,7 +18,7 @@
 // depois do commit e antes de o servidor saber o número, a próxima consulta
 // acha o orçamento pela coluna e não cria outro.
 
-const { comTransacao, executar, ehViolacaoDeUnicidade, ehTransitorio } = require('../firebirdEscrita');
+const { comTransacao, executar, ehViolacaoDeUnicidade, ehTransitorio, geracaoDoDriver } = require('../firebirdEscrita');
 const { textoParaErp, marcadorDeTexto, testarEscritaWin1252, paraBufferWin1252 } = require('../textoParaErp');
 const { fixEncoding } = require('../encoding');
 const { logWarn, logInfo } = require('../../logger');
@@ -714,6 +714,7 @@ async function relatorio(config) {
     ),
     observacaoEm: ['OBSERVACAO', 'OBS'].filter(c => existe(schema, 'ORCAMENTO', c)),
     texto: await modoDeTexto(),
+    driver: geracaoDoDriver(),
     validacao: await validarConfig(config),
     numeracao: {},
     calibracao: {},
