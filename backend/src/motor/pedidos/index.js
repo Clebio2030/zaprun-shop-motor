@@ -290,12 +290,22 @@ function ultimosResultados() {
  * contra o que o Automec da casa preenche. Usa a configuração da última
  * consulta (empresa do ERP).
  */
-async function compararOrcamento(nr) {
+/**
+ * @param {number} nr
+ * @param {number|null} [com]
+ */
+async function compararOrcamento(nr, com = null) {
   const a = adaptador();
   if (!a || typeof a.compararOrcamento !== 'function') {
     throw new Error(`o ERP "${tipoErp()}" não grava orçamento`);
   }
-  return a.compararOrcamento(configAtual || { idEmpresaErp: 1 }, nr);
+  const config = configAtual || { idEmpresaErp: 1 };
+  return {
+    camposDaCasa: await a.compararOrcamento(config, nr),
+    // Coluna por coluna contra um orçamento feito no Automec (?com=, ou o
+    // último de antes de hoje). Aqui é a máquina da loja: valores inteiros.
+    contraUmDaCasa: await a.compararDoisOrcamentos(config, nr, com)
+  };
 }
 
 module.exports = {

@@ -967,7 +967,10 @@ async function relatorio(config) {
         `SELECT FIRST 1 NRORCAMENTO FROM ORCAMENTO WHERE IDEMPRESA = ? AND ${COLUNA_ZR} IS NOT NULL ORDER BY NRORCAMENTO DESC`,
         [idEmpresa]
       );
-      if (ultimo) saida.casa.ultimoDoMotor = await compararComACasa(config, Number(ultimo.nrorcamento));
+      if (ultimo) {
+        saida.casa.ultimoDoMotor = await compararComACasa(config, Number(ultimo.nrorcamento));
+        saida.casa.comparacaoDireta = await compararDois(config, Number(ultimo.nrorcamento));
+      }
     }
   } catch (err) {
     saida.casa = { erro: err.message };
@@ -1019,6 +1022,135 @@ async function compararComACasa(config, nr) {
   return saida;
 }
 
+// Colunas de dado pessoal ou texto livre: no relatório que sai da máquina,
+// só o tamanho ("texto(23)"), nunca o conteúdo.
+const COLUNAS_PESSOAIS = /^(CLIENTE|RAZAO|NOME|TELEFONE.*|CELULAR|WHATSAPP|FONE.*|EMAIL|CGC|CPF.*|CNPJ|RG|ENDERECO.*|LOCALENTR|BAIRRO|SUBBAIRRO|COMPLEMENTO|REFERENCIA|CEP|OBS.*|CONTATO|DESCRICAO|HASH)$/;
+
+const COLUNAS_DE_VALOR = /^(NR.*|POSIC|VL.*|TOTAL.*|SUBTOTAL|QTD.*|PRECO.*|DESCONTO|PERC.*|VALOR.*|CUSTO.*|PESO.*|CALC|IDENDERECO|PONTUACAO)$/;
+
+function lerValor(linha, coluna) {
+  let v = linha ? linha[coluna.toLowerCase()] : null;
+  if (Buffer.isBuffer(v)) v = fixEncoding(v).trim();
+  if (v === '') v = null;
+  return v === undefined ? null : v;
+}
+
+function mostrar(coluna, v, def, local) {
+  if (v === null) return null;
+  if (v instanceof Date) return v.toISOString();
+  if (local) return v;
+  if (typeof v === 'string' && (COLUNAS_PESSOAIS.test(coluna) || v.length > TEXTO_CURTO)) return `texto(${v.length})`;
+  if (def && def.blob) return `blob(${v})`;
+  return v;
+}
+
+async function lerLinhas(schema, tabela, where, params, limite) {
+  const defs = schema.tabelas[tabela];
+  const cols = Object.entries(defs).map(([c, d]) => {
+    if (d.blob) return `OCTET_LENGTH(${c}) AS ${c}`;
+    if (d.texto) return `CAST(${c} AS VARCHAR(${Math.max(1, d.tamanho || 1)}) CHARACTER SET OCTETS) AS ${c}`;
+    return c;
+  });
+  return executar(`SELECT FIRST ${limite} ${cols.join(', ')} FROM ${tabela} WHERE ${where}`, params);
+}
+
+/** Uma linha contra a outra, coluna por coluna, só onde a FORMA difere. */
+function diferencas(schema, tabela, casa, motor, local) {
+  const saida = [];
+  for (const [c, d] of Object.entries(schema.tabelas[tabela])) {
+    if (c === COLUNA_ZR) continue;
+    const a = lerValor(casa, c);
+    const b = lerValor(motor, c);
+    if (a === null && b === null) continue;
+    let situacao = null;
+    if (a !== null && b === null) situacao = 'só na casa';
+    else if (a === null && b !== null) situacao = 'só no Motor';
+    else {
+      const texto = typeof a === 'string' && (COLUNAS_PESSOAIS.test(c) || a.length > TEXTO_CURTO);
+      // Valor, quantidade, número e chave sempre diferem entre dois
+      // orçamentos — como no texto livre, o que interessa é estar preenchido.
+      const valor = typeof a === 'number' && (!Number.isInteger(a) || COLUNAS_DE_VALOR.test(c));
+      const igual = a instanceof Date ? b instanceof Date : String(a) === String(b);
+      if (!igual && !texto && !valor && !(a instanceof Date)) situacao = 'diferente';
+    }
+    if (situacao) saida.push({ coluna: c, casa: mostrar(c, a, d, local), motor: mostrar(c, b, d, local), situacao });
+  }
+  return saida;
+}
+
+/**
+ * Um orçamento do Motor contra um orçamento feito no próprio Automec, coluna
+ * por coluna, no cabeçalho e no primeiro item. Sem `nrCasa`, usa o último
+ * orçamento da casa (sem ZR_PEDIDO) de antes de hoje.
+ *
+ * @param {boolean} local  true na rota local: mostra os valores inteiros.
+ */
+/**
+ * @param {any} config
+ * @param {number} nrMotor
+ * @param {number|null} [nrCasa]
+ * @param {boolean} [local]
+ */
+async function compararDois(config, nrMotor, nrCasa = null, local = false) {
+  const schema = await lerSchema(true);
+  const idEmpresa = Number(config.idEmpresaErp || 1);
+  let casaNr = nrCasa;
+  if (!casaNr) {
+    const filtroZr = existe(schema, 'ORCAMENTO', COLUNA_ZR) ? ` AND ${COLUNA_ZR} IS NULL` : '';
+    const [l] = await executar(
+      `SELECT FIRST 1 NRORCAMENTO FROM ORCAMENTO WHERE IDEMPRESA = ? AND DTORC < CURRENT_DATE${filtroZr} ORDER BY NRORCAMENTO DESC`,
+      [idEmpresa]
+    );
+    casaNr = l ? Number(l.nrorcamento) : null;
+  }
+  /** @type {any} */
+  const saida = { idEmpresa, motor: nrMotor, casa: casaNr };
+  if (!casaNr) return { ...saida, erro: 'nenhum orçamento do Automec de antes de hoje nesta empresa' };
+
+  const onde = 'NRORCAMENTO = ? AND IDEMPRESA = ?';
+  const [cabCasa] = await lerLinhas(schema, 'ORCAMENTO', onde, [casaNr, idEmpresa], 1);
+  const [cabMotor] = await lerLinhas(schema, 'ORCAMENTO', onde, [nrMotor, idEmpresa], 1);
+  if (!cabMotor) return { ...saida, erro: `o orçamento ${nrMotor} não existe na empresa ${idEmpresa}` };
+  saida.orcamento = diferencas(schema, 'ORCAMENTO', cabCasa, cabMotor, local);
+
+  const ordem = existe(schema, 'ORCPROD', 'POSIC') ? ' ORDER BY POSIC' : '';
+  const itensCasa = await lerLinhas(schema, 'ORCPROD', onde + ordem, [casaNr, idEmpresa], 5);
+  const itensMotor = await lerLinhas(schema, 'ORCPROD', onde + ordem, [nrMotor, idEmpresa], 5);
+  saida.itensQtd = { casa: itensCasa.length, motor: itensMotor.length };
+  saida.item = itensCasa[0] && itensMotor[0] ? diferencas(schema, 'ORCPROD', itensCasa[0], itensMotor[0], local) : [];
+
+  // Tabelas que o Automec costuma ligar ao orçamento (parcelas, por exemplo):
+  // a casa tem linha lá e o Motor não?
+  saida.tabelasLigadas = [];
+  const ligadas = await executar(
+    `SELECT DISTINCT TRIM(rf.RDB$RELATION_NAME) AS T FROM RDB$RELATION_FIELDS rf
+      JOIN RDB$RELATIONS r ON r.RDB$RELATION_NAME = rf.RDB$RELATION_NAME
+     WHERE TRIM(rf.RDB$FIELD_NAME) IN ('NRORCAMENTO', 'NRORC') AND COALESCE(r.RDB$SYSTEM_FLAG, 0) = 0
+       AND r.RDB$VIEW_BLR IS NULL AND TRIM(rf.RDB$RELATION_NAME) NOT IN ('ORCAMENTO', 'ORCPROD')`
+  );
+  for (const { t } of ligadas) {
+    const tabela = String(t).trim();
+    if (!/^[A-Z0-9_$]{1,63}$/.test(tabela)) continue;
+    try {
+      const temNr = await executar(
+        "SELECT TRIM(RDB$FIELD_NAME) AS C FROM RDB$RELATION_FIELDS WHERE TRIM(RDB$RELATION_NAME) = ? AND TRIM(RDB$FIELD_NAME) IN ('NRORCAMENTO', 'NRORC')",
+        [tabela]
+      );
+      const col = String(temNr[0].c).trim();
+      const [q] = await executar(
+        `SELECT (SELECT COUNT(*) FROM ${tabela} WHERE ${col} = ?) AS CASA, (SELECT COUNT(*) FROM ${tabela} WHERE ${col} = ?) AS MOTOR FROM RDB$DATABASE`,
+        [casaNr, nrMotor]
+      );
+      if (Number(q.casa) || Number(q.motor)) {
+        saida.tabelasLigadas.push({ tabela, casa: Number(q.casa), motor: Number(q.motor) });
+      }
+    } catch (err) {
+      saida.tabelasLigadas.push({ tabela, erro: err.message });
+    }
+  }
+  return saida;
+}
+
 /** Zera os caches (o servidor mudou a configuração, ou um teste quer recomeçar). */
 function esquecerCaches() {
   _schema = null;
@@ -1032,6 +1164,7 @@ module.exports = {
   sincronizarPedido,
   garantirColunaZr,
   compararComACasa,
+  compararDois,
   relatorio,
   esquecerCaches,
   // exportados para teste

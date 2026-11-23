@@ -337,6 +337,15 @@ relatório traz o mesmo para o último orçamento do Motor (`casa.ultimoDoMotor`
 com o valor mais comum só para código/indicador — nome e telefone não saem da
 máquina.
 
+**Comparação direta (v1.3.4).** `GET /pedidos/comparar?nr=84478` também traz
+`contraUmDaCasa`: o orçamento do Motor contra o último que o próprio Automec
+gravou antes de hoje (ou `&com=<número>`), coluna por coluna no cabeçalho e no
+primeiro item — o que só a casa tem, o que só o Motor tem, e os códigos que
+diferem — e as outras tabelas com NRORCAMENTO em que a casa tem linha e o Motor
+não (parcelas, por exemplo). O relatório leva o mesmo em
+`casa.comparacaoDireta`, com nome, telefone, endereço e texto livre reduzidos a
+`texto(n)`.
+
 Para desfazer (só se a coluna atrapalhar o Automec): desligar no painel e
 `ALTER TABLE ORCAMENTO DROP ZR_PEDIDO`.
 

@@ -85,5 +85,6 @@ module.exports = {
   // tela de orçamento do Automec ANTES de chegar pedido de verdade.
   prepararPedidos: modo => require('./automec-orcamento').garantirColunaZr(modo),
   compararOrcamento: (config, nr) => require('./automec-orcamento').compararComACasa(config, nr),
+  compararDoisOrcamentos: (config, nr, com) => require('./automec-orcamento').compararDois(config, nr, com, true),
   esquecerCachesPedidos: () => require('./automec-orcamento').esquecerCaches()
 };

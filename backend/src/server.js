@@ -112,12 +112,14 @@ app.get('/pedidos', (_req, res) => {
 
 // "Gravou, mas não aparece na tela do Automec": o orçamento do Motor contra o
 // que o Automec da casa preenche — as colunas que lá vêm cheias e aqui vazias.
-//   GET /pedidos/comparar?nr=84478
+//   GET /pedidos/comparar?nr=84478            contra o último da casa de antes de hoje
+//   GET /pedidos/comparar?nr=84478&com=84470   contra um orçamento escolhido
 app.get('/pedidos/comparar', async (req, res) => {
   const nr = String(req.query.nr || '').trim();
   if (!/^\d+$/.test(nr)) return res.status(400).json({ erro: 'Informe ?nr= com o número do orçamento.' });
   try {
-    res.json(await compararOrcamento(Number(nr)));
+    const com = /^\d+$/.test(String(req.query.com || '')) ? Number(req.query.com) : null;
+    res.json(await compararOrcamento(Number(nr), com));
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
