@@ -285,4 +285,25 @@ function ultimosResultados() {
   return ultimos.slice();
 }
 
-module.exports = { iniciarPedidos, consultarAgora, estadoDosPedidos, ultimosResultados, rodarUmaVez, descrever };
+/**
+ * GET /pedidos/comparar?nr=84478 no servidor local: um orçamento do Motor
+ * contra o que o Automec da casa preenche. Usa a configuração da última
+ * consulta (empresa do ERP).
+ */
+async function compararOrcamento(nr) {
+  const a = adaptador();
+  if (!a || typeof a.compararOrcamento !== 'function') {
+    throw new Error(`o ERP "${tipoErp()}" não grava orçamento`);
+  }
+  return a.compararOrcamento(configAtual || { idEmpresaErp: 1 }, nr);
+}
+
+module.exports = {
+  iniciarPedidos,
+  consultarAgora,
+  estadoDosPedidos,
+  ultimosResultados,
+  rodarUmaVez,
+  descrever,
+  compararOrcamento
+};

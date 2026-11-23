@@ -102,6 +102,7 @@ O Motor também **escreve** no Automec: o pedido da Loja vira orçamento
 | Recriar orçamento que sumiu do ERP | a loja excluiu de propósito — responda `removido` |
 | Criar `ZR_PEDIDO` só no primeiro pedido | a loja não consegue conferir a tela do Automec antes do pedido real, e um pedido barrado no servidor deixa a coluna sem nascer (visto 19/11). Crie na consulta em modo Gravar |
 | TPB montado à mão passado ao `db.transaction()` | o updater preserva o `node_modules` e há máquina com node-firebird 2.x, que põe versão/escrita/espera sozinho: o TPB da 1.x vira `[3, 3, ...]` e o Firebird recusa ("isc_tpb_shared requires table name"). Use `parametrosDaTransacao()` |
+| Deixar nulo o que o Automec da casa sempre preenche | o orçamento existe no banco e não aparece na tela do Automec (JPR, 23/11). `perfilDaCasa` copia códigos e prazos; teste em `tools/fb-teste/testar-casa.js` |
 | Valor fixo da Pontual em CALC/QTDELIB | o Automec da casa preenche diferente (JPR: QTDELIB = quantidade em 0 de 200 itens). Copie a convenção dos últimos itens |
 
 ## Release

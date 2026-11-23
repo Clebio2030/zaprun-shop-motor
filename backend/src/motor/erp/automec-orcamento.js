@@ -27,7 +27,7 @@ const TABELAS = ['ORCAMENTO', 'ORCPROD', 'PRODUTO', 'PRODUTOPRECO', 'MUNICIPIO',
 const COLUNA_ZR = 'ZR_PEDIDO';
 const CACHE_SCHEMA_MS = 10 * 60 * 1000;
 const CACHE_MUNICIPIO_MS = 24 * 60 * 60 * 1000;
-const TENTATIVAS_NUMERACAO = 3;
+const TENTATIVAS_NUMERACAO = 6;
 
 const TIPO_TEXTO = new Set([14, 37]); // CHAR, VARCHAR
 const TIPO_BLOB = 261;
@@ -178,7 +178,7 @@ function aplicarExtras(valores, extras, modalidade) {
 
 // ── Datas no jeito do Automec ────────────────────────────────────────────────
 
-/** @type {{ em: number, horaBase1899: boolean, dataComHora: boolean, itens: Record<string, any> } | null} */
+/** @type {{ em: number, horaBase1899: boolean, dataComHora: boolean, itens: Record<string, any>, casa: any } | null} */
 let _convencao = null;
 
 // Colunas do ORCPROD cujo valor a Pontual chuta (= quantidade) e que o
@@ -224,6 +224,123 @@ async function lerRegrasDosItens(schema, idEmpresa) {
   return regras;
 }
 
+// Colunas que o Motor preenche por conta própria. As DEMAIS são as que o
+// Automec da casa pode preencher e o Motor deixaria nulas.
+const COLUNAS_NOSSAS_ORCPROD = new Set([
+  'POSIC', 'NRORCAMENTO', 'IDEMPRESA', 'CDPRODUTO', 'DESCRICAO', 'UNID', 'QTDPRODUTO', 'VLUNIT', 'TOTAL',
+  'QTDEPECA', 'STATUS', 'CDDEPOSITO', 'DESCONTO', 'IDPRECO', 'ORDEM', 'SUBTOTAL', 'CALC', 'VLBCICMS',
+  'PERC_ICMS', 'VLICMS', 'PERC_REDUCAO', 'VLBCST', 'PERC_ST', 'VLST', 'PERC_REDUCAO_ST', 'PERC_COMISS',
+  'CDCLIENTE', 'HASH', 'QTDELIB', 'VLCUSTO', 'PRAZOPRODUTO', 'RESUMO_OS'
+]);
+const TIPOS_NUMERICOS = new Set([7, 8, 10, 16, 27]);
+const AMOSTRA_CASA = 200;
+const PARCELA_COPIA = 0.9;
+const TEXTO_CURTO = 20;
+
+/**
+ * Como o Automec da casa preenche as colunas que o Motor NÃO preenche, nos
+ * últimos 200 registros da empresa feitos por ele (sem ZR_PEDIDO).
+ *
+ * Por que existe: na JPR (23/11) o orçamento gravado pelo Motor existia no
+ * banco mas não aparecia na tela do Automec — a tela filtra ou liga por algum
+ * campo que o próprio Automec sempre preenche. Em vez de adivinhar qual, o
+ * Motor copia: coluna de código/indicador (número ou texto de até 20
+ * caracteres) que vem com o MESMO valor em 90% ou mais dos registros da casa
+ * entra igual no orçamento do Motor. Data, hora, BLOB e texto livre nunca.
+ *
+ * @returns {Promise<{ constantes: Record<string, any>, perfil: any[] }>}
+ */
+async function perfilDaCasa(schema, tabela, idEmpresa, nossas) {
+  const defs = schema.tabelas[tabela] || {};
+  const candidatas = Object.entries(defs).filter(
+    ([c, d]) => !nossas.has(c) && c !== COLUNA_ZR && !d.blob
+  );
+  const vazio = { constantes: {}, perfil: [] };
+  if (!candidatas.length || !defs.IDEMPRESA || !defs.NRORCAMENTO) return vazio;
+
+  const comReferencia = tabela === 'ORCAMENTO' && defs.DTORC;
+  const selecao = candidatas
+    .map(([c, d]) => (d.texto ? `CAST(${c} AS VARCHAR(${Math.max(1, d.tamanho || 1)}) CHARACTER SET OCTETS) AS ${c}` : c))
+    .concat(comReferencia ? ['DTORC AS ZR_REF_DTORC'] : [])
+    .join(', ');
+  const semMotor = existe(schema, 'ORCAMENTO', COLUNA_ZR)
+    ? tabela === 'ORCAMENTO'
+      ? ` AND ${COLUNA_ZR} IS NULL`
+      : ` AND NOT EXISTS (SELECT 1 FROM ORCAMENTO o WHERE o.NRORCAMENTO = t.NRORCAMENTO AND o.IDEMPRESA = t.IDEMPRESA AND o.${COLUNA_ZR} IS NOT NULL)`
+    : '';
+  const linhas = await executar(
+    `SELECT FIRST ${AMOSTRA_CASA} ${selecao} FROM ${tabela} t WHERE IDEMPRESA = ?${semMotor} ORDER BY NRORCAMENTO DESC`,
+    [idEmpresa]
+  );
+  const total = linhas.length;
+  if (total < 10) return vazio;
+
+  /** @type {Record<string, any>} */
+  const constantes = {};
+  const perfil = [];
+  for (const [c, d] of candidatas) {
+    const chave = c.toLowerCase();
+    const contagem = new Map();
+    const prazos = new Map();
+    let preenchidos = 0;
+    for (const l of linhas) {
+      let v = l[chave];
+      // Data: o que se repete não é o dia, é o PRAZO a partir da data do
+      // orçamento (validade de 7 dias, entrega em 3...).
+      if (v instanceof Date && l.zr_ref_dtorc instanceof Date) {
+        const dias = Math.round((v.getTime() - l.zr_ref_dtorc.getTime()) / 86400000);
+        prazos.set(dias, (prazos.get(dias) || 0) + 1);
+      }
+      if (Buffer.isBuffer(v)) v = fixEncoding(v).trim();
+      if (v instanceof Date) v = 'data';
+      if (v === null || v === undefined || v === '') continue;
+      preenchidos += 1;
+      const k = typeof v === 'number' ? `n:${v}` : `s:${v}`;
+      contagem.set(k, (contagem.get(k) || 0) + 1);
+    }
+    let maisComum = null;
+    let vezes = 0;
+    for (const [k, q] of contagem) {
+      if (q > vezes) {
+        vezes = q;
+        maisComum = k;
+      }
+    }
+    const valor = maisComum === null ? null : maisComum.startsWith('n:') ? Number(maisComum.slice(2)) : maisComum.slice(2);
+    const curto = TIPOS_NUMERICOS.has(d.tipo) || (d.texto && (d.tamanho || 0) <= TEXTO_CURTO);
+    let copia = curto && valor !== null && valor !== 'data' && vezes / total >= PARCELA_COPIA;
+    if (copia) constantes[c] = valor;
+    let prazo = null;
+    if (!copia && (d.tipo === TIPO_DATA || d.tipo === TIPO_TIMESTAMP) && preenchidos / total >= PARCELA_COPIA) {
+      let melhor = null;
+      let qtd = 0;
+      for (const [dias, q] of prazos) {
+        if (q > qtd) {
+          qtd = q;
+          melhor = dias;
+        }
+      }
+      // 70%: o prazo da casa costuma ser fixo, mas alguém sempre edita um.
+      if (melhor !== null && melhor >= 0 && melhor <= 365 && qtd / total >= 0.7) {
+        prazo = melhor;
+        constantes[c] = { $diasAposDtorc: melhor };
+        copia = true;
+      }
+    }
+    if (preenchidos / total >= 0.5) {
+      perfil.push({
+        coluna: c,
+        preenchidos: Math.round((preenchidos / total) * 100),
+        // Só código/indicador repetido aparece: nome, telefone e texto livre
+        // não saem da máquina do cliente.
+        maisComum: prazo !== null ? `data do orçamento + ${prazo} dia(s)` : curto && valor !== 'data' && vezes / total >= 0.3 ? valor : null,
+        copiado: copia
+      });
+    }
+  }
+  return { constantes, perfil };
+}
+
 async function lerConvencao(schema, idEmpresa) {
   if (_convencao && Date.now() - _convencao.em < CACHE_SCHEMA_MS) return _convencao;
   let horaBase1899 = true;
@@ -240,8 +357,31 @@ async function lerConvencao(schema, idEmpresa) {
     }
   }
   const itens = await lerRegrasDosItens(schema, idEmpresa);
-  _convencao = { em: Date.now(), horaBase1899, dataComHora, itens };
+  const casaOrcamento = await perfilDaCasa(schema, 'ORCAMENTO', idEmpresa, COLUNAS_NOSSAS_ORCAMENTO);
+  const casaItens = await perfilDaCasa(schema, 'ORCPROD', idEmpresa, COLUNAS_NOSSAS_ORCPROD);
+  const casa = {
+    ORCAMENTO: casaOrcamento.constantes,
+    ORCPROD: casaItens.constantes,
+    perfil: { ORCAMENTO: casaOrcamento.perfil, ORCPROD: casaItens.perfil }
+  };
+  _convencao = { em: Date.now(), horaBase1899, dataComHora, itens, casa };
   return _convencao;
+}
+
+/** Troca { $diasAposDtorc: n } (prazo aprendido da casa) pela data de fato. */
+function resolverPrazos(valores, dtorc) {
+  /** @type {Record<string, any>} */
+  const saida = {};
+  for (const [c, v] of Object.entries(valores || {})) {
+    if (v && typeof v === 'object' && Number.isInteger(v.$diasAposDtorc)) {
+      const d = new Date(dtorc);
+      d.setDate(d.getDate() + v.$diasAposDtorc);
+      saida[c] = d;
+    } else {
+      saida[c] = v;
+    }
+  }
+  return saida;
 }
 
 function datasDoOrcamento(schema, criadoEm, convencao) {
@@ -488,7 +628,7 @@ function linhasDoPedido(p) {
   return linhas;
 }
 
-async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modoTexto, avisos, regras = {}) {
+async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modoTexto, avisos, regras = {}, casa = {}) {
   const regra = col => (regras[col] ? regras[col].regra : 'qtd');
   let posic = 0;
   for (const linha of linhasDoPedido(p)) {
@@ -499,6 +639,9 @@ async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modo
     posic += 1;
     const valores = aplicarExtras(
       {
+        // O que o Automec da casa sempre põe (ver perfilDaCasa) — por baixo:
+        // o mapeamento do Motor e os extras do servidor vencem.
+        ...casa,
         POSIC: posic,
         NRORCAMENTO: nr,
         IDEMPRESA: idEmpresa,
@@ -576,9 +719,11 @@ async function sincronizarPedido(p, config, modo) {
         );
         return { ...base, ...resultado, idEmpresaErp: idEmpresa, avisos, duracaoMs: Date.now() - inicio };
       } catch (err) {
-        // Outro caixa pegou o mesmo número no mesmo instante: numera de novo.
+        // Chave repetida: outro caixa pegou o mesmo número no mesmo instante,
+        // ou o gerador de uma chave do Automec está atrás dos dados (JPR,
+        // 23/11: GEN_ORCPROD atrás do maior POSIC — cada tentativa o avança).
         if (ehViolacaoDeUnicidade(err) && tentativa < TENTATIVAS_NUMERACAO) {
-          logWarn(`[Pedidos] Pedido #${p.numero}: número de orçamento disputado, tentando de novo (${tentativa}).`);
+          logWarn(`[Pedidos] Pedido #${p.numero}: chave repetida no ERP (${String(err.message).slice(0, 120)}), tentando de novo (${tentativa}).`);
           continue;
         }
         throw err;
@@ -637,12 +782,14 @@ async function reconciliar(tx, p, config, ctx) {
     );
     const nr = Number(n);
     const vendedor = Number(p.vendedor || config.cdVendedorPadrao || 1);
+    const datas = datasDoOrcamento(schema, p.criadoEm, ctx.convencao);
     const valores = aplicarExtras(
       {
+        ...resolverPrazos(ctx.convencao.casa.ORCAMENTO, datas.DTORC),
         NRORCAMENTO: nr,
         IDEMPRESA: ctx.idEmpresa,
         CDCLIENTE: ctx.cdCliente,
-        ...datasDoOrcamento(schema, p.criadoEm, ctx.convencao),
+        ...datas,
         CDVENDEDOR: vendedor,
         CDPROPAGANDA: 0,
         STATUS: 0,
@@ -662,7 +809,7 @@ async function reconciliar(tx, p, config, ctx) {
       .map(([c]) => c);
     if (faltam.length) ctx.avisos.push(`ORCAMENTO tem obrigatórias que o Motor não preenche: ${faltam.join(', ')}`);
     await tx.query(ins.sql, ins.params);
-    const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens);
+    const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD);
     return ctx.ensaio
       ? { acao: 'criado', nrPrevisto: nr, linhas, cdVendedor: String(vendedor), situacaoErp: 0 }
       : { acao: 'criado', nrOrcamento: nr, linhas, cdVendedor: String(vendedor), situacaoErp: 0 };
@@ -687,8 +834,27 @@ async function reconciliar(tx, p, config, ctx) {
     ctx.modoTexto
   );
   await tx.query(up.sql, up.params);
+  // O que a casa sempre preenche entra só onde está NULO: o Automec pode ter
+  // mudado esses campos depois (impressão, conversão), e o Motor não desfaz.
+  // É o que conserta, com um "Reenviar", o orçamento gravado antes disto.
+  for (const [coluna, valor] of Object.entries(ctx.convencao.casa.ORCAMENTO || {})) {
+    const def = schema.tabelas.ORCAMENTO[coluna];
+    if (!def) continue;
+    if (valor && typeof valor === 'object' && Number.isInteger(valor.$diasAposDtorc)) {
+      await tx.query(
+        `UPDATE ORCAMENTO SET ${coluna} = DTORC + ${valor.$diasAposDtorc} WHERE NRORCAMENTO = ? AND IDEMPRESA = ? AND ${coluna} IS NULL AND DTORC IS NOT NULL`,
+        [nr, ctx.idEmpresa]
+      );
+      continue;
+    }
+    const v = valorDaColuna(def, valor, ctx.modoTexto);
+    await tx.query(
+      `UPDATE ORCAMENTO SET ${coluna} = ${v.marca} WHERE NRORCAMENTO = ? AND IDEMPRESA = ? AND ${coluna} IS NULL`,
+      [v.param, nr, ctx.idEmpresa]
+    );
+  }
   await tx.query('DELETE FROM ORCPROD WHERE NRORCAMENTO = ? AND IDEMPRESA = ?', [nr, ctx.idEmpresa]);
-  const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens);
+  const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD);
   return { acao: 'atualizado', nrOrcamento: nr, linhas, situacaoErp: 0 };
 }
 
@@ -794,9 +960,61 @@ async function relatorio(config) {
   }
 
   try {
+    const conv = await lerConvencao(schema, idEmpresa);
+    saida.casa = { copiados: { ORCAMENTO: conv.casa.ORCAMENTO, ORCPROD: conv.casa.ORCPROD }, perfil: conv.casa.perfil };
+    if (existe(schema, 'ORCAMENTO', COLUNA_ZR)) {
+      const [ultimo] = await executar(
+        `SELECT FIRST 1 NRORCAMENTO FROM ORCAMENTO WHERE IDEMPRESA = ? AND ${COLUNA_ZR} IS NOT NULL ORDER BY NRORCAMENTO DESC`,
+        [idEmpresa]
+      );
+      if (ultimo) saida.casa.ultimoDoMotor = await compararComACasa(config, Number(ultimo.nrorcamento));
+    }
+  } catch (err) {
+    saida.casa = { erro: err.message };
+  }
+
+  try {
     saida.posicionais = await insercoesPorPosicao();
   } catch (err) {
     saida.posicionais = [`(não deu para verificar: ${err.message})`];
+  }
+  return saida;
+}
+
+/**
+ * Um orçamento do Motor, coluna a coluna, contra o que o Automec da casa
+ * preenche: as colunas que lá vêm preenchidas em 80% ou mais e aqui estão
+ * vazias. É a resposta para "gravou, mas não aparece na tela do Automec".
+ */
+async function compararComACasa(config, nr) {
+  const schema = await lerSchema(true);
+  const idEmpresa = Number(config.idEmpresaErp || 1);
+  _convencao = null;
+  const conv = await lerConvencao(schema, idEmpresa);
+  /** @type {any} */
+  const saida = { nrOrcamento: nr, idEmpresa, faltando: [], copiadoAgora: conv.casa.ORCAMENTO, itensCopiado: conv.casa.ORCPROD };
+  for (const tabela of ['ORCAMENTO', 'ORCPROD']) {
+    const perfil = (conv.casa.perfil[tabela] || []).filter(c => c.preenchidos >= 80);
+    if (!perfil.length) continue;
+    const cols = perfil.map(c => {
+      const d = schema.tabelas[tabela][c.coluna];
+      return d && d.texto ? `CAST(${c.coluna} AS VARCHAR(${Math.max(1, d.tamanho || 1)}) CHARACTER SET OCTETS) AS ${c.coluna}` : c.coluna;
+    });
+    const [nosso] = await executar(
+      `SELECT FIRST 1 ${cols.join(', ')} FROM ${tabela} WHERE NRORCAMENTO = ? AND IDEMPRESA = ?`,
+      [nr, idEmpresa]
+    );
+    if (!nosso) {
+      saida.faltando.push({ tabela, coluna: '*', casa: `o orçamento ${nr} não existe nesta empresa` });
+      continue;
+    }
+    for (const c of perfil) {
+      let v = nosso[c.coluna.toLowerCase()];
+      if (Buffer.isBuffer(v)) v = fixEncoding(v).trim();
+      if (v === null || v === undefined || v === '') {
+        saida.faltando.push({ tabela, coluna: c.coluna, casa: `${c.preenchidos}% preenchida`, maisComum: c.maisComum, copiado: c.copiado });
+      }
+    }
   }
   return saida;
 }
@@ -813,6 +1031,7 @@ function esquecerCaches() {
 module.exports = {
   sincronizarPedido,
   garantirColunaZr,
+  compararComACasa,
   relatorio,
   esquecerCaches,
   // exportados para teste
@@ -821,6 +1040,7 @@ module.exports = {
   aplicarExtras,
   valorDaRegra,
   datasDoOrcamento,
+  resolverPrazos,
   linhasDoPedido,
   cabecalhoVariavel,
   chaveDeNome,

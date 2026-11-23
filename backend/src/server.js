@@ -33,7 +33,8 @@ const {
   iniciarPedidos,
   consultarAgora,
   estadoDosPedidos,
-  ultimosResultados
+  ultimosResultados,
+  compararOrcamento
 } = require('./motor/pedidos');
 
 const app = express();
@@ -107,6 +108,19 @@ app.get('/status', async (_req, res) => {
 // Motor fez, com número do orçamento, avisos e erro do Firebird inteiro.
 app.get('/pedidos', (_req, res) => {
   res.json({ estado: estadoDosPedidos(), ultimos: ultimosResultados() });
+});
+
+// "Gravou, mas não aparece na tela do Automec": o orçamento do Motor contra o
+// que o Automec da casa preenche — as colunas que lá vêm cheias e aqui vazias.
+//   GET /pedidos/comparar?nr=84478
+app.get('/pedidos/comparar', async (req, res) => {
+  const nr = String(req.query.nr || '').trim();
+  if (!/^\d+$/.test(nr)) return res.status(400).json({ erro: 'Informe ?nr= com o número do orçamento.' });
+  try {
+    res.json(await compararOrcamento(Number(nr)));
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Consulta o servidor agora, sem esperar os 30 s.

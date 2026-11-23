@@ -52,3 +52,10 @@ test('regra copiada do Automec da casa para CALC/QTDELIB/QTDEPECA', () => {
   assert.strictEqual(valorDaRegra('um', 2.5), 1);
   assert.strictEqual(valorDaRegra(undefined, 3), 3, 'sem regra, a quantidade (como a Pontual)');
 });
+
+test('prazo aprendido da casa vira data a partir da data do orçamento', () => {
+  const { resolverPrazos } = require('./automec-orcamento');
+  const r = resolverPrazos({ DTVALIDADE: { $diasAposDtorc: 7 }, TIPOORC: 'O' }, new Date(2026, 10, 23));
+  assert.strictEqual(r.TIPOORC, 'O');
+  assert.strictEqual(r.DTVALIDADE.getDate(), 30);
+});

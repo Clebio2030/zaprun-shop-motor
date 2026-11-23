@@ -84,5 +84,6 @@ module.exports = {
   // o painel liga — e não só no primeiro pedido: a loja precisa conferir a
   // tela de orçamento do Automec ANTES de chegar pedido de verdade.
   prepararPedidos: modo => require('./automec-orcamento').garantirColunaZr(modo),
+  compararOrcamento: (config, nr) => require('./automec-orcamento').compararComACasa(config, nr),
   esquecerCachesPedidos: () => require('./automec-orcamento').esquecerCaches()
 };

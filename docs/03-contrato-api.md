@@ -315,6 +315,28 @@ a Pontual). Na JPR, CALC = quantidade em 2 de 200 e QTDELIB em 0 de 200 — copi
 a Pontual punha nos itens um valor que o próprio Automec nunca põe. O relatório
 mostra a regra adotada em `calibracao.itens`. `extras` ainda sobrescreve.
 
+**O que a casa sempre preenche, o Motor também preenche (v1.3.3).** Na JPR o
+orçamento gravado existia no banco e não aparecia na tela do Automec: a tela
+filtra ou liga por campos que o próprio Automec sempre põe. O Motor olha os
+últimos 200 orçamentos e itens da empresa feitos pelo Automec (sem ZR_PEDIDO) e,
+para cada coluna que ele não preenche:
+
+- código ou indicador (número, ou texto de até 20 caracteres) com o mesmo valor
+  em 90% ou mais → grava igual;
+- data preenchida em 90% ou mais com o mesmo prazo a partir de DTORC em 70% ou
+  mais (validade de 7 dias, por exemplo) → grava DTORC + prazo;
+- texto livre, BLOB e o resto → não copia, e aparece na comparação.
+
+Na regravação (Reenviar no painel, ou o pedido mudou), esses campos entram só
+onde estão NULOS — é assim que um orçamento gravado antes se conserta.
+`extras` do servidor e o mapeamento do Motor vencem o que veio da casa.
+
+Diagnóstico: `GET http://127.0.0.1:3010/pedidos/comparar?nr=84478` mostra as
+colunas que a casa preenche em 80% ou mais e que esse orçamento tem vazias; o
+relatório traz o mesmo para o último orçamento do Motor (`casa.ultimoDoMotor`),
+com o valor mais comum só para código/indicador — nome e telefone não saem da
+máquina.
+
 Para desfazer (só se a coluna atrapalhar o Automec): desligar no painel e
 `ALTER TABLE ORCAMENTO DROP ZR_PEDIDO`.
 
