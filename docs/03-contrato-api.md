@@ -346,15 +346,22 @@ não (parcelas, por exemplo). O relatório leva o mesmo em
 `casa.comparacaoDireta`, com nome, telefone, endereço e texto livre reduzidos a
 `texto(n)`.
 
-**O que a comparação da JPR mostrou (v1.3.5).**
-- Pedido sem endereço de entrega (retirada) leva o endereço do cadastro do
-  cliente do orçamento (o balcão): LOCALENTR, BAIRRO, CEP, UF, CDMUNICIPIO — o
-  orçamento da casa sempre tem, e a Pontual faz o mesmo. Pedido com entrega usa
-  o dele e só completa o que faltar.
-- STATUS e ORDEM do item seguem o valor mais comum da casa (50% ou mais). Na
-  JPR, 'FF' (o da Pontual) aparece em 3 de 200 itens; a casa usa vazio.
+**Regras do dono depois da JPR (v1.3.6).**
+- Retirada vai SEM endereço (o balcão pode não ter um — como o orçamento do
+  PDV Web da Pontual); entrega leva o endereço do pedido.
+- STATUS do item: **EN** na entrega, **RM** na retirada. Nunca 'FF'.
 - Número de orçamento já citado numa venda (`SAIDAESTOQUE.NRORCAMENTO`) é
   pulado: a JPR tinha venda apontando para o 84478 que o Motor criou.
+
+**Dois orçamentos ao mesmo tempo.** O número é lido (MAX+1 da empresa) e
+gravado dentro da mesma transação, com INSERT puro: se outro caixa — ou outro
+pedido — pegar o mesmo número no mesmo instante, a chave primária de ORCAMENTO
+(NRORCAMENTO, IDEMPRESA) recusa o segundo. Do lado do Motor isso é "chave
+repetida": espera um pouco e numera de novo (até 6 vezes); nada é sobrescrito e
+nada fica pela metade. 5 pedidos simultâneos no banco de teste saem com 5
+números diferentes. O que o Motor não controla: se a tela do Automec RESERVA o
+número ao abrir (e não ao gravar), o caixa que abriu antes do Motor gravar
+recebe erro de chave ao salvar — como já acontece entre dois caixas.
 
 Para desfazer (só se a coluna atrapalhar o Automec): desligar no painel e
 `ALTER TABLE ORCAMENTO DROP ZR_PEDIDO`.

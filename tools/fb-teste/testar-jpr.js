@@ -1,8 +1,8 @@
 // tools/fb-teste/testar-jpr.js
-// Reproduz o que a comparação mostrou na JPR (23/11) e confere o Motor 1.3.5:
-//  - pedido de retirada leva o endereço do cliente balcão (LOCALENTR, BAIRRO,
-//    CEP, UF, CDMUNICIPIO), como o Automec e a Pontual fazem;
-//  - STATUS/ORDEM do item seguem a casa (lá: vazio, não 'FF');
+// Reproduz o que a comparação mostrou na JPR (23/11) e confere o Motor 1.3.6:
+//  - retirada vai SEM endereço, mesmo com o cliente balcão tendo um (como o
+//    orçamento do PDV Web da Pontual);
+//  - STATUS do item: RM na retirada, EN na entrega — nunca 'FF';
 //  - número de orçamento já citado numa venda (SAIDAESTOQUE) é pulado.
 // Monta e desmonta os próprios dados no banco de TESTE.
 //
@@ -63,15 +63,15 @@ async function existe(tabela, coluna) {
       'SELECT CAST(LOCALENTR AS VARCHAR(60) CHARACTER SET OCTETS) AS L, CAST(BAIRRO AS VARCHAR(40) CHARACTER SET OCTETS) AS B, CEP, UF, CDMUNICIPIO FROM ORCAMENTO WHERE NRORCAMENTO = ? AND IDEMPRESA = 1',
       [nr]
     );
-    console.log('endereço:', fixEncoding(o.l), '|', fixEncoding(o.b), '|', String(o.cep).trim(), String(o.uf).trim(), o.cdmunicipio);
-    assert.strictEqual(fixEncoding(o.l).trim(), 'AV. DA LOJA, 500');
-    assert.strictEqual(o.cdmunicipio, 2507507);
+    console.log('endereço da retirada:', o.l, o.b, o.cep, o.uf, o.cdmunicipio);
+    assert.strictEqual(o.l, null, 'retirada sem endereço, mesmo com o balcão tendo um');
+    assert.strictEqual(o.cdmunicipio, null);
     const [i] = await executar('SELECT CAST(STATUS AS VARCHAR(2) CHARACTER SET OCTETS) AS S, ORDEM FROM ORCPROD WHERE NRORCAMENTO = ? AND IDEMPRESA = 1', [nr]);
-    console.log('item STATUS:', JSON.stringify(i.s === null ? null : fixEncoding(i.s)), 'ORDEM:', String(i.ordem).trim());
-    assert.strictEqual(i.s === null ? null : fixEncoding(i.s).trim(), '');
+    console.log('item STATUS:', fixEncoding(i.s).trim(), 'ORDEM:', String(i.ordem).trim());
+    assert.strictEqual(fixEncoding(i.s).trim(), 'RM', 'retirada: item RM');
     const cmp = await orc.compararDois(cfg, nr, 7250);
     console.log('vendas ligadas ao 7303:', JSON.stringify(cmp.tabelasLigadas));
-    console.log('\nOK — endereço do balcão, item no jeito da casa e número pulando a venda.');
+    console.log('\nOK — retirada sem endereço, item RM e número pulando a venda.');
   } finally {
     if (nr) {
       await executar('DELETE FROM ORCPROD WHERE IDEMPRESA = 1 AND NRORCAMENTO = ?', [nr]);

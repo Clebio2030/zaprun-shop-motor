@@ -110,7 +110,7 @@ async function contar() {
   assert.strictEqual(itens[0].idpreco, 1, 'sem idpreco do servidor, o do produto');
   assert.strictEqual(itens[1].idpreco, 4, 'idpreco do servidor');
   assert.strictEqual(itens[1].cddeposito, 2);
-  assert.strictEqual(String(itens[0].status).trim(), 'FF');
+  assert.strictEqual(String(itens[0].status).trim(), 'EN', 'entrega: item EN');
   assert.strictEqual(Number(itens[1].calc), 1.5);
   assert.strictEqual(fixEncoding(itens[1].descricao), 'CARVÃO 5KG');
 

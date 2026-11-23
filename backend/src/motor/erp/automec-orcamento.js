@@ -178,7 +178,7 @@ function aplicarExtras(valores, extras, modalidade) {
 
 // ── Datas no jeito do Automec ────────────────────────────────────────────────
 
-/** @type {{ em: number, horaBase1899: boolean, dataComHora: boolean, itens: Record<string, any>, casa: any, codigos: Record<string, any> } | null} */
+/** @type {{ em: number, horaBase1899: boolean, dataComHora: boolean, itens: Record<string, any>, casa: any } | null} */
 let _convencao = null;
 
 // Colunas do ORCPROD cujo valor a Pontual chuta (= quantidade) e que o
@@ -202,36 +202,6 @@ function valorDaRegra(regra, quantidade) {
  * que aparece em 80% ou mais; sem maioria clara, fica a quantidade (Pontual)
  * e o relatório mostra que não deu para decidir.
  */
-/**
- * STATUS e ORDEM do item como o Automec da casa grava. A Pontual grava 'FF' e
- * 'A'; na JPR (23/11) 'FF' aparece em 3 de 200 itens — a casa usa vazio
- * (146), 'EN' (32) e 'RM' (19). Vale o valor mais comum com 50% ou mais; sem
- * maioria, fica o da Pontual.
- */
-async function lerCodigosDosItens(schema, idEmpresa) {
-  const p = schema.tabelas.ORCPROD;
-  /** @type {Record<string, any>} */
-  const saida = {};
-  for (const [col, padrao] of [['STATUS', 'FF'], ['ORDEM', 'A']]) {
-    if (!p[col]) continue;
-    const linhas = await executar(
-      `SELECT CAST(${col} AS VARCHAR(20) CHARACTER SET OCTETS) AS V, COUNT(*) AS Q
-         FROM (SELECT FIRST 200 ${col} FROM ORCPROD WHERE IDEMPRESA = ? ORDER BY NRORCAMENTO DESC)
-        GROUP BY 1 ORDER BY 2 DESC`,
-      [idEmpresa]
-    );
-    const total = linhas.reduce((t, l) => t + Number(l.q), 0);
-    const [topo] = linhas;
-    if (topo && total >= 10 && Number(topo.q) / total >= 0.5) {
-      const v = topo.v === null || topo.v === undefined ? null : fixEncoding(topo.v).trim();
-      saida[col] = { valor: v === '' ? '' : v, decidiu: true, parcela: Math.round((Number(topo.q) / total) * 100) };
-    } else {
-      saida[col] = { valor: padrao, decidiu: false };
-    }
-  }
-  return saida;
-}
-
 async function lerRegrasDosItens(schema, idEmpresa) {
   const p = schema.tabelas.ORCPROD;
   /** @type {Record<string, any>} */
@@ -387,7 +357,6 @@ async function lerConvencao(schema, idEmpresa) {
     }
   }
   const itens = await lerRegrasDosItens(schema, idEmpresa);
-  const codigos = await lerCodigosDosItens(schema, idEmpresa);
   const casaOrcamento = await perfilDaCasa(schema, 'ORCAMENTO', idEmpresa, COLUNAS_NOSSAS_ORCAMENTO);
   const casaItens = await perfilDaCasa(schema, 'ORCPROD', idEmpresa, COLUNAS_NOSSAS_ORCPROD);
   const casa = {
@@ -395,7 +364,7 @@ async function lerConvencao(schema, idEmpresa) {
     ORCPROD: casaItens.constantes,
     perfil: { ORCAMENTO: casaOrcamento.perfil, ORCPROD: casaItens.perfil }
   };
-  _convencao = { em: Date.now(), horaBase1899, dataComHora, itens, casa, codigos };
+  _convencao = { em: Date.now(), horaBase1899, dataComHora, itens, casa };
   return _convencao;
 }
 
@@ -621,41 +590,10 @@ const COLUNAS_NOSSAS_ORCAMENTO = new Set([
 ]);
 
 /** O cabeçalho que o pedido muda (no UPDATE, sem número, data, hora e vendedor). */
-/**
- * O endereço do cadastro do cliente do orçamento (o balcão, em geral) — o que
- * a Pontual põe no orçamento, e o que o próprio Automec põe: na JPR (23/11) o
- * orçamento da casa tinha LOCALENTR, BAIRRO, CEP, UF e CDMUNICIPIO, e o do
- * Motor, de retirada, nada — e não aparecia na tela. Pedido sem endereço de
- * entrega usa este; pedido com entrega usa o dele e só completa o que faltar.
- */
-async function enderecoDoCliente(schema, cdCliente, idEmpresa) {
-  const c = schema.tabelas.CLIENTE || {};
-  if (!c.CDCLIENTE) return {};
-  const campos = { LOCALENTR: 'ENDERECO', BAIRRO: 'BAIRRO', SUBBAIRRO: 'SUBBAIRRO', CEP: 'CEP', UF: 'UF', CDMUNICIPIO: 'CDMUNICIPIO', COMPLEMENTO: 'COMPLEMENTO' };
-  const sel = Object.entries(campos)
-    .filter(([, col]) => c[col])
-    .map(([alvo, col]) => (c[col].texto ? `CAST(${col} AS VARCHAR(${Math.max(1, c[col].tamanho || 1)}) CHARACTER SET OCTETS) AS ${alvo}` : `${col} AS ${alvo}`));
-  if (!sel.length) return {};
-  const porEmpresa = c.IDEMPRESA ? ' AND IDEMPRESA = ?' : '';
-  const [l] = await executar(
-    `SELECT FIRST 1 ${sel.join(', ')} FROM CLIENTE WHERE CDCLIENTE = ?${porEmpresa}`,
-    porEmpresa ? [cdCliente, idEmpresa] : [cdCliente]
-  );
-  /** @type {Record<string, any>} */
-  const saida = {};
-  if (!l) return saida;
-  for (const alvo of Object.keys(campos)) {
-    let v = l[alvo.toLowerCase()];
-    if (Buffer.isBuffer(v)) v = fixEncoding(v).trim();
-    if (v !== null && v !== undefined && v !== '') saida[alvo] = v;
-  }
-  return saida;
-}
-
-function cabecalhoVariavel(p, cdMunicipio, padrao = {}) {
-  const tem = !!p.entrega;
+// Retirada vai sem endereço (o balcão pode não ter um — como no orçamento do
+// PDV Web da Pontual); entrega leva o endereço do pedido.
+function cabecalhoVariavel(p, cdMunicipio) {
   const e = p.entrega || {};
-  const ou = (valor, campo) => (valor !== null && valor !== undefined && valor !== '' ? valor : padrao[campo] ?? null);
   const perc = p.subtotal > 0 ? Math.round((p.desconto / p.subtotal) * 1000000) / 10000 : 0;
   return {
     CLIENTE: p.cliente.nome,
@@ -665,13 +603,12 @@ function cabecalhoVariavel(p, cdMunicipio, padrao = {}) {
     SUBTOTAL: p.subtotal,
     DESCONTO: p.desconto,
     PERC_DESCONTO: perc,
-    LOCALENTR: ou(e.logradouro, 'LOCALENTR'),
-    BAIRRO: ou(e.bairro, 'BAIRRO'),
-    CEP: ou(e.cep, 'CEP'),
-    UF: ou(e.uf, 'UF'),
-    COMPLEMENTO: tem ? e.complemento || null : padrao.COMPLEMENTO ?? null,
-    CDMUNICIPIO: ou(cdMunicipio, 'CDMUNICIPIO'),
-    ...(tem || !padrao.SUBBAIRRO ? {} : { SUBBAIRRO: padrao.SUBBAIRRO }),
+    LOCALENTR: e.logradouro || null,
+    BAIRRO: e.bairro || null,
+    CEP: e.cep || null,
+    UF: e.uf || null,
+    COMPLEMENTO: e.complemento || null,
+    CDMUNICIPIO: cdMunicipio,
     OBSERVACAO: p.observacao,
     OBS: p.observacao
   };
@@ -693,8 +630,7 @@ function linhasDoPedido(p) {
   return linhas;
 }
 
-async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modoTexto, avisos, regras = {}, casa = {}, codigos = {}) {
-  const codigo = (col, padrao) => (codigos[col] ? codigos[col].valor : padrao);
+async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modoTexto, avisos, regras = {}, casa = {}) {
   const regra = col => (regras[col] ? regras[col].regra : 'qtd');
   let posic = 0;
   for (const linha of linhasDoPedido(p)) {
@@ -718,11 +654,13 @@ async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modo
         VLUNIT: linha.valorUnitario,
         TOTAL: linha.total,
         QTDEPECA: valorDaRegra(regra('QTDEPECA'), linha.quantidade),
-        STATUS: codigo('STATUS', 'FF'),
+        // Situação do item no Automec: EN = entrega, RM = retirada (decisão
+        // do dono, 23/11). Nunca 'FF', que é o da Pontual.
+        STATUS: p.modalidade === 'retirada' ? 'RM' : 'EN',
         CDDEPOSITO: produto.cddeposito,
         DESCONTO: 0,
         IDPRECO: linha.idpreco ?? produto.idpreco,
-        ORDEM: codigo('ORDEM', 'A'),
+        ORDEM: 'A',
         SUBTOTAL: linha.total,
         CALC: valorDaRegra(regra('CALC'), linha.quantidade),
         VLBCICMS: 0, PERC_ICMS: 0, VLICMS: 0, PERC_REDUCAO: 0, VLBCST: 0,
@@ -770,7 +708,6 @@ async function sincronizarPedido(p, config, modo) {
     const cdCliente = Number(config.cdClienteErp || 1);
     const schemaInicial = await lerSchema();
     const convencao = await lerConvencao(schemaInicial, idEmpresa);
-    const enderecoPadrao = await enderecoDoCliente(schemaInicial, cdCliente, idEmpresa);
     const cdMunicipio = p.entrega
       ? await codigoDoMunicipio(schemaInicial, p.entrega.cidade, p.entrega.uf)
       : null;
@@ -781,7 +718,7 @@ async function sincronizarPedido(p, config, modo) {
     for (let tentativa = 1; ; tentativa++) {
       try {
         const resultado = await comTransacao(
-          tx => reconciliar(tx, p, config, { idEmpresa, cdCliente, cdMunicipio, convencao, ensaio, modoTexto: texto.modo, avisos, enderecoPadrao }),
+          tx => reconciliar(tx, p, config, { idEmpresa, cdCliente, cdMunicipio, convencao, ensaio, modoTexto: texto.modo, avisos }),
           { desfazer: ensaio }
         );
         return { ...base, ...resultado, idEmpresaErp: idEmpresa, avisos, duracaoMs: Date.now() - inicio };
@@ -791,6 +728,10 @@ async function sincronizarPedido(p, config, modo) {
         // 23/11: GEN_ORCPROD atrás do maior POSIC — cada tentativa o avança).
         if (ehViolacaoDeUnicidade(err) && tentativa < TENTATIVAS_NUMERACAO) {
           logWarn(`[Pedidos] Pedido #${p.numero}: chave repetida no ERP (${String(err.message).slice(0, 120)}), tentando de novo (${tentativa}).`);
+          // Espera crescente e um pouco aleatória: o concorrente (outro caixa
+          // do Automec gravando o mesmo número) termina o commit e o MAX da
+          // próxima tentativa já o enxerga.
+          await new Promise(r => setTimeout(r, 150 * tentativa + Math.floor(Math.random() * 150)));
           continue;
         }
         throw err;
@@ -879,7 +820,7 @@ async function reconciliar(tx, p, config, ctx) {
         INDFINAL: -1,
         PONTUACAO: 0,
         IDENDERECO: 0,
-        ...cabecalhoVariavel(p, ctx.cdMunicipio, ctx.enderecoPadrao),
+        ...cabecalhoVariavel(p, ctx.cdMunicipio),
         ...(temZr ? { [COLUNA_ZR]: p.pedidoId } : {})
       },
       config.extras && config.extras.ORCAMENTO,
@@ -891,7 +832,7 @@ async function reconciliar(tx, p, config, ctx) {
       .map(([c]) => c);
     if (faltam.length) ctx.avisos.push(`ORCAMENTO tem obrigatórias que o Motor não preenche: ${faltam.join(', ')}`);
     await tx.query(ins.sql, ins.params);
-    const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD, ctx.convencao.codigos);
+    const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD);
     return ctx.ensaio
       ? { acao: 'criado', nrPrevisto: nr, linhas, cdVendedor: String(vendedor), situacaoErp: 0 }
       : { acao: 'criado', nrOrcamento: nr, linhas, cdVendedor: String(vendedor), situacaoErp: 0 };
@@ -910,7 +851,7 @@ async function reconciliar(tx, p, config, ctx) {
   const up = montarUpdate(
     schema,
     'ORCAMENTO',
-    aplicarExtras(cabecalhoVariavel(p, ctx.cdMunicipio, ctx.enderecoPadrao), config.extras && config.extras.ORCAMENTO_UPDATE, p.modalidade),
+    aplicarExtras(cabecalhoVariavel(p, ctx.cdMunicipio), config.extras && config.extras.ORCAMENTO_UPDATE, p.modalidade),
     'NRORCAMENTO = ? AND IDEMPRESA = ?',
     [nr, ctx.idEmpresa],
     ctx.modoTexto
@@ -936,7 +877,7 @@ async function reconciliar(tx, p, config, ctx) {
     );
   }
   await tx.query('DELETE FROM ORCPROD WHERE NRORCAMENTO = ? AND IDEMPRESA = ?', [nr, ctx.idEmpresa]);
-  const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD, ctx.convencao.codigos);
+  const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD);
   return { acao: 'atualizado', nrOrcamento: nr, linhas, situacaoErp: 0 };
 }
 
