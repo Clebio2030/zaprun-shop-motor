@@ -346,6 +346,16 @@ não (parcelas, por exemplo). O relatório leva o mesmo em
 `casa.comparacaoDireta`, com nome, telefone, endereço e texto livre reduzidos a
 `texto(n)`.
 
+**O que a comparação da JPR mostrou (v1.3.5).**
+- Pedido sem endereço de entrega (retirada) leva o endereço do cadastro do
+  cliente do orçamento (o balcão): LOCALENTR, BAIRRO, CEP, UF, CDMUNICIPIO — o
+  orçamento da casa sempre tem, e a Pontual faz o mesmo. Pedido com entrega usa
+  o dele e só completa o que faltar.
+- STATUS e ORDEM do item seguem o valor mais comum da casa (50% ou mais). Na
+  JPR, 'FF' (o da Pontual) aparece em 3 de 200 itens; a casa usa vazio.
+- Número de orçamento já citado numa venda (`SAIDAESTOQUE.NRORCAMENTO`) é
+  pulado: a JPR tinha venda apontando para o 84478 que o Motor criou.
+
 Para desfazer (só se a coluna atrapalhar o Automec): desligar no painel e
 `ALTER TABLE ORCAMENTO DROP ZR_PEDIDO`.
 

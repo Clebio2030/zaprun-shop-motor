@@ -23,7 +23,7 @@ const { textoParaErp, marcadorDeTexto, testarEscritaWin1252, paraBufferWin1252 }
 const { fixEncoding } = require('../encoding');
 const { logWarn, logInfo } = require('../../logger');
 
-const TABELAS = ['ORCAMENTO', 'ORCPROD', 'PRODUTO', 'PRODUTOPRECO', 'MUNICIPIO', 'VENDEDOR', 'CLIENTE', 'CONFIGURACAO'];
+const TABELAS = ['ORCAMENTO', 'ORCPROD', 'PRODUTO', 'PRODUTOPRECO', 'MUNICIPIO', 'VENDEDOR', 'CLIENTE', 'CONFIGURACAO', 'SAIDAESTOQUE'];
 const COLUNA_ZR = 'ZR_PEDIDO';
 const CACHE_SCHEMA_MS = 10 * 60 * 1000;
 const CACHE_MUNICIPIO_MS = 24 * 60 * 60 * 1000;
@@ -178,7 +178,7 @@ function aplicarExtras(valores, extras, modalidade) {
 
 // ── Datas no jeito do Automec ────────────────────────────────────────────────
 
-/** @type {{ em: number, horaBase1899: boolean, dataComHora: boolean, itens: Record<string, any>, casa: any } | null} */
+/** @type {{ em: number, horaBase1899: boolean, dataComHora: boolean, itens: Record<string, any>, casa: any, codigos: Record<string, any> } | null} */
 let _convencao = null;
 
 // Colunas do ORCPROD cujo valor a Pontual chuta (= quantidade) e que o
@@ -202,6 +202,36 @@ function valorDaRegra(regra, quantidade) {
  * que aparece em 80% ou mais; sem maioria clara, fica a quantidade (Pontual)
  * e o relatório mostra que não deu para decidir.
  */
+/**
+ * STATUS e ORDEM do item como o Automec da casa grava. A Pontual grava 'FF' e
+ * 'A'; na JPR (23/11) 'FF' aparece em 3 de 200 itens — a casa usa vazio
+ * (146), 'EN' (32) e 'RM' (19). Vale o valor mais comum com 50% ou mais; sem
+ * maioria, fica o da Pontual.
+ */
+async function lerCodigosDosItens(schema, idEmpresa) {
+  const p = schema.tabelas.ORCPROD;
+  /** @type {Record<string, any>} */
+  const saida = {};
+  for (const [col, padrao] of [['STATUS', 'FF'], ['ORDEM', 'A']]) {
+    if (!p[col]) continue;
+    const linhas = await executar(
+      `SELECT CAST(${col} AS VARCHAR(20) CHARACTER SET OCTETS) AS V, COUNT(*) AS Q
+         FROM (SELECT FIRST 200 ${col} FROM ORCPROD WHERE IDEMPRESA = ? ORDER BY NRORCAMENTO DESC)
+        GROUP BY 1 ORDER BY 2 DESC`,
+      [idEmpresa]
+    );
+    const total = linhas.reduce((t, l) => t + Number(l.q), 0);
+    const [topo] = linhas;
+    if (topo && total >= 10 && Number(topo.q) / total >= 0.5) {
+      const v = topo.v === null || topo.v === undefined ? null : fixEncoding(topo.v).trim();
+      saida[col] = { valor: v === '' ? '' : v, decidiu: true, parcela: Math.round((Number(topo.q) / total) * 100) };
+    } else {
+      saida[col] = { valor: padrao, decidiu: false };
+    }
+  }
+  return saida;
+}
+
 async function lerRegrasDosItens(schema, idEmpresa) {
   const p = schema.tabelas.ORCPROD;
   /** @type {Record<string, any>} */
@@ -357,6 +387,7 @@ async function lerConvencao(schema, idEmpresa) {
     }
   }
   const itens = await lerRegrasDosItens(schema, idEmpresa);
+  const codigos = await lerCodigosDosItens(schema, idEmpresa);
   const casaOrcamento = await perfilDaCasa(schema, 'ORCAMENTO', idEmpresa, COLUNAS_NOSSAS_ORCAMENTO);
   const casaItens = await perfilDaCasa(schema, 'ORCPROD', idEmpresa, COLUNAS_NOSSAS_ORCPROD);
   const casa = {
@@ -364,7 +395,7 @@ async function lerConvencao(schema, idEmpresa) {
     ORCPROD: casaItens.constantes,
     perfil: { ORCAMENTO: casaOrcamento.perfil, ORCPROD: casaItens.perfil }
   };
-  _convencao = { em: Date.now(), horaBase1899, dataComHora, itens, casa };
+  _convencao = { em: Date.now(), horaBase1899, dataComHora, itens, casa, codigos };
   return _convencao;
 }
 
@@ -590,8 +621,41 @@ const COLUNAS_NOSSAS_ORCAMENTO = new Set([
 ]);
 
 /** O cabeçalho que o pedido muda (no UPDATE, sem número, data, hora e vendedor). */
-function cabecalhoVariavel(p, cdMunicipio) {
+/**
+ * O endereço do cadastro do cliente do orçamento (o balcão, em geral) — o que
+ * a Pontual põe no orçamento, e o que o próprio Automec põe: na JPR (23/11) o
+ * orçamento da casa tinha LOCALENTR, BAIRRO, CEP, UF e CDMUNICIPIO, e o do
+ * Motor, de retirada, nada — e não aparecia na tela. Pedido sem endereço de
+ * entrega usa este; pedido com entrega usa o dele e só completa o que faltar.
+ */
+async function enderecoDoCliente(schema, cdCliente, idEmpresa) {
+  const c = schema.tabelas.CLIENTE || {};
+  if (!c.CDCLIENTE) return {};
+  const campos = { LOCALENTR: 'ENDERECO', BAIRRO: 'BAIRRO', SUBBAIRRO: 'SUBBAIRRO', CEP: 'CEP', UF: 'UF', CDMUNICIPIO: 'CDMUNICIPIO', COMPLEMENTO: 'COMPLEMENTO' };
+  const sel = Object.entries(campos)
+    .filter(([, col]) => c[col])
+    .map(([alvo, col]) => (c[col].texto ? `CAST(${col} AS VARCHAR(${Math.max(1, c[col].tamanho || 1)}) CHARACTER SET OCTETS) AS ${alvo}` : `${col} AS ${alvo}`));
+  if (!sel.length) return {};
+  const porEmpresa = c.IDEMPRESA ? ' AND IDEMPRESA = ?' : '';
+  const [l] = await executar(
+    `SELECT FIRST 1 ${sel.join(', ')} FROM CLIENTE WHERE CDCLIENTE = ?${porEmpresa}`,
+    porEmpresa ? [cdCliente, idEmpresa] : [cdCliente]
+  );
+  /** @type {Record<string, any>} */
+  const saida = {};
+  if (!l) return saida;
+  for (const alvo of Object.keys(campos)) {
+    let v = l[alvo.toLowerCase()];
+    if (Buffer.isBuffer(v)) v = fixEncoding(v).trim();
+    if (v !== null && v !== undefined && v !== '') saida[alvo] = v;
+  }
+  return saida;
+}
+
+function cabecalhoVariavel(p, cdMunicipio, padrao = {}) {
+  const tem = !!p.entrega;
   const e = p.entrega || {};
+  const ou = (valor, campo) => (valor !== null && valor !== undefined && valor !== '' ? valor : padrao[campo] ?? null);
   const perc = p.subtotal > 0 ? Math.round((p.desconto / p.subtotal) * 1000000) / 10000 : 0;
   return {
     CLIENTE: p.cliente.nome,
@@ -601,12 +665,13 @@ function cabecalhoVariavel(p, cdMunicipio) {
     SUBTOTAL: p.subtotal,
     DESCONTO: p.desconto,
     PERC_DESCONTO: perc,
-    LOCALENTR: e.logradouro || null,
-    BAIRRO: e.bairro || null,
-    CEP: e.cep || null,
-    UF: e.uf || null,
-    COMPLEMENTO: e.complemento || null,
-    CDMUNICIPIO: cdMunicipio,
+    LOCALENTR: ou(e.logradouro, 'LOCALENTR'),
+    BAIRRO: ou(e.bairro, 'BAIRRO'),
+    CEP: ou(e.cep, 'CEP'),
+    UF: ou(e.uf, 'UF'),
+    COMPLEMENTO: tem ? e.complemento || null : padrao.COMPLEMENTO ?? null,
+    CDMUNICIPIO: ou(cdMunicipio, 'CDMUNICIPIO'),
+    ...(tem || !padrao.SUBBAIRRO ? {} : { SUBBAIRRO: padrao.SUBBAIRRO }),
     OBSERVACAO: p.observacao,
     OBS: p.observacao
   };
@@ -628,7 +693,8 @@ function linhasDoPedido(p) {
   return linhas;
 }
 
-async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modoTexto, avisos, regras = {}, casa = {}) {
+async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modoTexto, avisos, regras = {}, casa = {}, codigos = {}) {
+  const codigo = (col, padrao) => (codigos[col] ? codigos[col].valor : padrao);
   const regra = col => (regras[col] ? regras[col].regra : 'qtd');
   let posic = 0;
   for (const linha of linhasDoPedido(p)) {
@@ -652,11 +718,11 @@ async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modo
         VLUNIT: linha.valorUnitario,
         TOTAL: linha.total,
         QTDEPECA: valorDaRegra(regra('QTDEPECA'), linha.quantidade),
-        STATUS: 'FF',
+        STATUS: codigo('STATUS', 'FF'),
         CDDEPOSITO: produto.cddeposito,
         DESCONTO: 0,
         IDPRECO: linha.idpreco ?? produto.idpreco,
-        ORDEM: 'A',
+        ORDEM: codigo('ORDEM', 'A'),
         SUBTOTAL: linha.total,
         CALC: valorDaRegra(regra('CALC'), linha.quantidade),
         VLBCICMS: 0, PERC_ICMS: 0, VLICMS: 0, PERC_REDUCAO: 0, VLBCST: 0,
@@ -704,6 +770,7 @@ async function sincronizarPedido(p, config, modo) {
     const cdCliente = Number(config.cdClienteErp || 1);
     const schemaInicial = await lerSchema();
     const convencao = await lerConvencao(schemaInicial, idEmpresa);
+    const enderecoPadrao = await enderecoDoCliente(schemaInicial, cdCliente, idEmpresa);
     const cdMunicipio = p.entrega
       ? await codigoDoMunicipio(schemaInicial, p.entrega.cidade, p.entrega.uf)
       : null;
@@ -714,7 +781,7 @@ async function sincronizarPedido(p, config, modo) {
     for (let tentativa = 1; ; tentativa++) {
       try {
         const resultado = await comTransacao(
-          tx => reconciliar(tx, p, config, { idEmpresa, cdCliente, cdMunicipio, convencao, ensaio, modoTexto: texto.modo, avisos }),
+          tx => reconciliar(tx, p, config, { idEmpresa, cdCliente, cdMunicipio, convencao, ensaio, modoTexto: texto.modo, avisos, enderecoPadrao }),
           { desfazer: ensaio }
         );
         return { ...base, ...resultado, idEmpresaErp: idEmpresa, avisos, duracaoMs: Date.now() - inicio };
@@ -780,7 +847,22 @@ async function reconciliar(tx, p, config, ctx) {
       'SELECT COALESCE(MAX(NRORCAMENTO), 0) + 1 AS N FROM ORCAMENTO WHERE IDEMPRESA = ?',
       [ctx.idEmpresa]
     );
-    const nr = Number(n);
+    let nr = Number(n);
+    // Número que uma VENDA já cita (SAIDAESTOQUE.NRORCAMENTO) não pode virar
+    // orçamento novo: o Automec liga os dois e o orçamento some da tela de
+    // abertos. Na JPR (23/11) havia venda apontando para o 84478 que o Motor
+    // acabou de criar. Pula para depois do maior número citado.
+    if (schema.tabelas.SAIDAESTOQUE && schema.tabelas.SAIDAESTOQUE.NRORCAMENTO) {
+      const filtro = schema.tabelas.SAIDAESTOQUE.IDEMPRESA ? ' AND IDEMPRESA = ?' : '';
+      const [{ m }] = await tx.query(
+        `SELECT MAX(NRORCAMENTO) AS M FROM SAIDAESTOQUE WHERE NRORCAMENTO >= ?${filtro}`,
+        filtro ? [nr, ctx.idEmpresa] : [nr]
+      );
+      if (m !== null && m !== undefined && Number(m) >= nr) {
+        ctx.avisos.push(`Números ${nr} a ${Number(m)} já aparecem em vendas (SAIDAESTOQUE); usei o ${Number(m) + 1}.`);
+        nr = Number(m) + 1;
+      }
+    }
     const vendedor = Number(p.vendedor || config.cdVendedorPadrao || 1);
     const datas = datasDoOrcamento(schema, p.criadoEm, ctx.convencao);
     const valores = aplicarExtras(
@@ -797,7 +879,7 @@ async function reconciliar(tx, p, config, ctx) {
         INDFINAL: -1,
         PONTUACAO: 0,
         IDENDERECO: 0,
-        ...cabecalhoVariavel(p, ctx.cdMunicipio),
+        ...cabecalhoVariavel(p, ctx.cdMunicipio, ctx.enderecoPadrao),
         ...(temZr ? { [COLUNA_ZR]: p.pedidoId } : {})
       },
       config.extras && config.extras.ORCAMENTO,
@@ -809,7 +891,7 @@ async function reconciliar(tx, p, config, ctx) {
       .map(([c]) => c);
     if (faltam.length) ctx.avisos.push(`ORCAMENTO tem obrigatórias que o Motor não preenche: ${faltam.join(', ')}`);
     await tx.query(ins.sql, ins.params);
-    const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD);
+    const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD, ctx.convencao.codigos);
     return ctx.ensaio
       ? { acao: 'criado', nrPrevisto: nr, linhas, cdVendedor: String(vendedor), situacaoErp: 0 }
       : { acao: 'criado', nrOrcamento: nr, linhas, cdVendedor: String(vendedor), situacaoErp: 0 };
@@ -828,7 +910,7 @@ async function reconciliar(tx, p, config, ctx) {
   const up = montarUpdate(
     schema,
     'ORCAMENTO',
-    aplicarExtras(cabecalhoVariavel(p, ctx.cdMunicipio), config.extras && config.extras.ORCAMENTO_UPDATE, p.modalidade),
+    aplicarExtras(cabecalhoVariavel(p, ctx.cdMunicipio, ctx.enderecoPadrao), config.extras && config.extras.ORCAMENTO_UPDATE, p.modalidade),
     'NRORCAMENTO = ? AND IDEMPRESA = ?',
     [nr, ctx.idEmpresa],
     ctx.modoTexto
@@ -854,7 +936,7 @@ async function reconciliar(tx, p, config, ctx) {
     );
   }
   await tx.query('DELETE FROM ORCPROD WHERE NRORCAMENTO = ? AND IDEMPRESA = ?', [nr, ctx.idEmpresa]);
-  const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD);
+  const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD, ctx.convencao.codigos);
   return { acao: 'atualizado', nrOrcamento: nr, linhas, situacaoErp: 0 };
 }
 
@@ -1142,7 +1224,37 @@ async function compararDois(config, nrMotor, nrCasa = null, local = false) {
         [casaNr, nrMotor]
       );
       if (Number(q.casa) || Number(q.motor)) {
-        saida.tabelasLigadas.push({ tabela, casa: Number(q.casa), motor: Number(q.motor) });
+        /** @type {any} */
+        const item = { tabela, casa: Number(q.casa), motor: Number(q.motor) };
+        if (Number(q.motor)) {
+          // Datas, situação e códigos da linha ligada ao orçamento do Motor —
+          // para saber se ela veio antes dele (número já citado) ou depois
+          // (alguém o converteu). Nada de texto.
+          const cols = await executar(
+            `SELECT TRIM(rf.RDB$FIELD_NAME) AS C, f.RDB$FIELD_TYPE AS T FROM RDB$RELATION_FIELDS rf
+               JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = rf.RDB$FIELD_SOURCE
+              WHERE TRIM(rf.RDB$RELATION_NAME) = ? ORDER BY rf.RDB$FIELD_POSITION`,
+            [tabela]
+          );
+          const uteis = cols
+            .map(x => ({ c: String(x.c).trim(), t: Number(x.t) }))
+            .filter(x => [7, 8, 16, 12, 13, 35].includes(x.t) && /^(NR|ID|DT|HORA|STATUS|CD(VENDEDOR|CLIENTE|TPENTREGA)|ORIG|TIPO|SITUAC)/.test(x.c))
+            .slice(0, 15)
+            .map(x => x.c);
+          if (uteis.length) {
+            const linhas = await executar(`SELECT FIRST 3 ${uteis.join(', ')} FROM ${tabela} WHERE ${col} = ?`, [nrMotor]);
+            item.linhasDoMotor = linhas.map(l => {
+              /** @type {Record<string, any>} */
+              const o = {};
+              for (const c of uteis) {
+                const v = l[c.toLowerCase()];
+                o[c] = v instanceof Date ? v.toISOString() : v;
+              }
+              return o;
+            });
+          }
+        }
+        saida.tabelasLigadas.push(item);
       }
     } catch (err) {
       saida.tabelasLigadas.push({ tabela, erro: err.message });
