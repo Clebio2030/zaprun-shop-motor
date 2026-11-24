@@ -308,12 +308,16 @@ INTEGER`), depois de conferir que nenhuma procedure/trigger insere em ORCAMENTO
 sem listar colunas. Gravada na mesma transação: se o resultado não chegar ao
 servidor, a próxima consulta acha o orçamento pela coluna e não duplica.
 
-`CALC`, `QTDELIB` e `QTDEPECA` dos itens copiam o Automec da casa (v1.3.1): o
+`QTDELIB` e `QTDEPECA` dos itens copiam o Automec da casa (v1.3.1): o
 Motor olha os últimos 200 itens da empresa e, se 80% ou mais têm o valor igual à
 quantidade, zero, nulo ou 1, grava igual; sem maioria, grava a quantidade (como
-a Pontual). Na JPR, CALC = quantidade em 2 de 200 e QTDELIB em 0 de 200 — copiar
-a Pontual punha nos itens um valor que o próprio Automec nunca põe. O relatório
-mostra a regra adotada em `calibracao.itens`. `extras` ainda sobrescreve.
+a Pontual). Na JPR, QTDELIB = quantidade em 0 de 200 — copiar a Pontual punha nos
+itens um valor que o próprio Automec nunca põe. O relatório mostra a regra
+adotada em `calibracao.itens`. `extras` ainda sobrescreve.
+
+**`CALC` = valor unitário do item (v1.3.9, decisão do dono).** Antes copiava a
+casa e, na JPR, sem maioria, caía na quantidade. O relatório conta em
+`calibracao.orcprod.calc_vlunit` quantos dos últimos 200 itens têm CALC = VLUNIT.
 
 **O que a casa sempre preenche, o Motor também preenche (v1.3.3).** Na JPR o
 orçamento gravado existia no banco e não aparecia na tela do Automec: a tela
@@ -363,6 +367,28 @@ números diferentes. O que o Motor não controla: se a tela do Automec RESERVA o
 número ao abrir (e não ao gravar), o caixa que abriu antes do Motor gravar
 recebe erro de chave ao salvar — como já acontece entre dois caixas.
 
+**Histórico do Automec (v1.3.9).** A aba "Histórico" do orçamento lê
+`SIS_APPHISTORY`, que o PROGRAMA Automec grava ao salvar (procedure
+`SP_ADDHISTORY(IDMENUITEM, TIPO, CONTEXTO, MENSAGEM, IDUSUARIO)`; não é gatilho).
+O Motor grava igual, na mesma transação do orçamento:
+
+| Campo | Valor |
+|---|---|
+| IDMENUITEM | a tela de orçamento, lida de uma linha da casa com CONTEXTO `NRORCAMENTO=` (15 na JPR) |
+| TIPO | 1 na inclusão; 2 na alteração e no cancelamento |
+| CONTEXTO | `NRORCAMENTO=199177;IDEMPRESA=1;` |
+| MENSAGEM | inclusão: as colunas preenchidas; alteração: só as que mudaram (`VLTOTAL;SUBTOTAL;`), `ITENS;` se só os itens mudaram, `STATUS;` no cancelamento — cortada em 80 |
+| IDUSUARIO | 1 (decisão do dono, 23/11) |
+
+- Usa `EXECUTE PROCEDURE` (a da JPR tem SUSPEND sem RETURNS, e o SELECT é
+  recusado). Sem a procedure, INSERT direto nas 5 colunas.
+- Sem linha de orçamento da casa no histórico, não grava: não inventa a tela.
+- "Reenviar" sem mudança não gera linha. Ensaio não deixa linha.
+- Falha no histórico vira aviso; o orçamento grava assim mesmo.
+- Ajuste sem release, em `extras.HISTORICO` no servidor: `{ "IDUSUARIO": 7 }`,
+  `{ "IDMENUITEM": 15 }` ou `{ "desligado": true }`.
+- Relatório: `historicoAutomec` (modo, tela, usuário, motivo quando não grava).
+
 Para desfazer (só se a coluna atrapalhar o Automec): desligar no painel e
 `ALTER TABLE ORCAMENTO DROP ZR_PEDIDO`.
 
@@ -374,4 +400,4 @@ POST /pedidos/consultar   consulta agora, sem esperar 30 s
 GET  /status              ganhou o bloco "pedidos"
 ```
 
-Teste contra Firebird de teste: `tools/fb-teste/` (schema mínimo + 11 cenários).
+Teste contra Firebird de teste: `tools/fb-teste/` (schema mínimo + 11 cenários; `testar-casa.js`, `testar-jpr.js`, `testar-historico.js`).

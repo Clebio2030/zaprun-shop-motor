@@ -23,7 +23,7 @@ const { textoParaErp, marcadorDeTexto, testarEscritaWin1252, paraBufferWin1252 }
 const { fixEncoding } = require('../encoding');
 const { logWarn, logInfo } = require('../../logger');
 
-const TABELAS = ['ORCAMENTO', 'ORCPROD', 'PRODUTO', 'PRODUTOPRECO', 'MUNICIPIO', 'VENDEDOR', 'CLIENTE', 'CONFIGURACAO', 'SAIDAESTOQUE'];
+const TABELAS = ['ORCAMENTO', 'ORCPROD', 'PRODUTO', 'PRODUTOPRECO', 'MUNICIPIO', 'VENDEDOR', 'CLIENTE', 'CONFIGURACAO', 'SAIDAESTOQUE', 'SIS_APPHISTORY'];
 const COLUNA_ZR = 'ZR_PEDIDO';
 const CACHE_SCHEMA_MS = 10 * 60 * 1000;
 const CACHE_MUNICIPIO_MS = 24 * 60 * 60 * 1000;
@@ -183,9 +183,10 @@ let _convencao = null;
 
 // Colunas do ORCPROD cujo valor a Pontual chuta (= quantidade) e que o
 // Automec de cada cliente preenche do seu jeito. Na JPR (relatório de
-// 19/11) CALC = QTDPRODUTO em 2 de 200 itens e QTDELIB em 0 de 200: copiar a
-// Pontual punha no orçamento um valor que o próprio Automec nunca põe.
-const COLUNAS_COPIADAS = ['CALC', 'QTDELIB', 'QTDEPECA'];
+// 19/11) QTDELIB = QTDPRODUTO em 0 de 200 itens: copiar a Pontual punha no
+// orçamento um valor que o próprio Automec nunca põe.
+// CALC saiu daqui (v1.3.9): é o valor unitário, sempre (ver gravarItens).
+const COLUNAS_COPIADAS = ['QTDELIB', 'QTDEPECA'];
 const PARCELA_MINIMA = 0.8;
 
 /** Valor de uma coluna de item pela regra lida dos orçamentos da casa. */
@@ -662,7 +663,10 @@ async function gravarItens(tx, schema, p, nr, idEmpresa, cdCliente, extras, modo
         IDPRECO: linha.idpreco ?? produto.idpreco,
         ORDEM: 'A',
         SUBTOTAL: linha.total,
-        CALC: valorDaRegra(regra('CALC'), linha.quantidade),
+        // CALC = valor unitário do produto (o dono, 23/11: "ela é importante
+        // conter o vlunit dos produtos"). Antes vinha da regra da casa, que na
+        // JPR não decidia (8 de 200 = quantidade) e caía na quantidade.
+        CALC: linha.valorUnitario,
         VLBCICMS: 0, PERC_ICMS: 0, VLICMS: 0, PERC_REDUCAO: 0, VLBCST: 0,
         PERC_ST: 0, VLST: 0, PERC_REDUCAO_ST: 0, PERC_COMISS: 0,
         CDCLIENTE: cdCliente,
@@ -708,6 +712,7 @@ async function sincronizarPedido(p, config, modo) {
     const cdCliente = Number(config.cdClienteErp || 1);
     const schemaInicial = await lerSchema();
     const convencao = await lerConvencao(schemaInicial, idEmpresa);
+    const historico = await comoGravarHistorico(schemaInicial, config);
     const cdMunicipio = p.entrega
       ? await codigoDoMunicipio(schemaInicial, p.entrega.cidade, p.entrega.uf)
       : null;
@@ -718,7 +723,7 @@ async function sincronizarPedido(p, config, modo) {
     for (let tentativa = 1; ; tentativa++) {
       try {
         const resultado = await comTransacao(
-          tx => reconciliar(tx, p, config, { idEmpresa, cdCliente, cdMunicipio, convencao, ensaio, modoTexto: texto.modo, avisos }),
+          tx => reconciliar(tx, p, config, { idEmpresa, cdCliente, cdMunicipio, convencao, historico, ensaio, modoTexto: texto.modo, avisos }),
           { desfazer: ensaio }
         );
         return { ...base, ...resultado, idEmpresaErp: idEmpresa, avisos, duracaoMs: Date.now() - inicio };
@@ -833,6 +838,11 @@ async function reconciliar(tx, p, config, ctx) {
     if (faltam.length) ctx.avisos.push(`ORCAMENTO tem obrigatórias que o Motor não preenche: ${faltam.join(', ')}`);
     await tx.query(ins.sql, ins.params);
     const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD);
+    // Inclusão: a MENSAGEM lista as colunas preenchidas, como o Automec faz.
+    const preenchidas = Object.entries(valores)
+      .filter(([c, v]) => existe(schema, 'ORCAMENTO', c) && v !== null && v !== undefined && v !== '')
+      .map(([c]) => c);
+    await registrarHistorico(tx, ctx, TIPO_INCLUIR, nr, preenchidas);
     return ctx.ensaio
       ? { acao: 'criado', nrPrevisto: nr, linhas, cdVendedor: String(vendedor), situacaoErp: 0 }
       : { acao: 'criado', nrOrcamento: nr, linhas, cdVendedor: String(vendedor), situacaoErp: 0 };
@@ -845,17 +855,15 @@ async function reconciliar(tx, p, config, ctx) {
 
   if (p.cancelado) {
     await tx.query('UPDATE ORCAMENTO SET STATUS = 2 WHERE NRORCAMENTO = ? AND IDEMPRESA = ?', [nr, ctx.idEmpresa]);
+    await registrarHistorico(tx, ctx, TIPO_ALTERAR, nr, ['STATUS']);
     return { acao: 'cancelado', nrOrcamento: nr, situacaoErp: 2 };
   }
 
-  const up = montarUpdate(
-    schema,
-    'ORCAMENTO',
-    aplicarExtras(cabecalhoVariavel(p, ctx.cdMunicipio), config.extras && config.extras.ORCAMENTO_UPDATE, p.modalidade),
-    'NRORCAMENTO = ? AND IDEMPRESA = ?',
-    [nr, ctx.idEmpresa],
-    ctx.modoTexto
-  );
+  const novos = aplicarExtras(cabecalhoVariavel(p, ctx.cdMunicipio), config.extras && config.extras.ORCAMENTO_UPDATE, p.modalidade);
+  // Antes de gravar: o que de fato muda, para a MENSAGEM do histórico.
+  const alteradas = await colunasQueMudam(tx, schema, nr, ctx.idEmpresa, novos, ctx.modoTexto);
+  const itensMudam = await itensQueMudam(tx, schema, nr, ctx.idEmpresa, p);
+  const up = montarUpdate(schema, 'ORCAMENTO', novos, 'NRORCAMENTO = ? AND IDEMPRESA = ?', [nr, ctx.idEmpresa], ctx.modoTexto);
   await tx.query(up.sql, up.params);
   // O que a casa sempre preenche entra só onde está NULO: o Automec pode ter
   // mudado esses campos depois (impressão, conversão), e o Motor não desfaz.
@@ -878,6 +886,10 @@ async function reconciliar(tx, p, config, ctx) {
   }
   await tx.query('DELETE FROM ORCPROD WHERE NRORCAMENTO = ? AND IDEMPRESA = ?', [nr, ctx.idEmpresa]);
   const linhas = await gravarItens(tx, schema, p, nr, ctx.idEmpresa, ctx.cdCliente, config.extras, ctx.modoTexto, ctx.avisos, ctx.convencao.itens, ctx.convencao.casa.ORCPROD);
+  // Item trocado com o mesmo total não muda coluna nenhuma do cabeçalho.
+  if (itensMudam && !alteradas.includes('SUBTOTAL') && !alteradas.includes('VLTOTAL')) alteradas.push('ITENS');
+  // "Reenviar" sem mudança (só para consertar o orçamento) não é alteração.
+  if (alteradas.length) await registrarHistorico(tx, ctx, TIPO_ALTERAR, nr, alteradas);
   return { acao: 'atualizado', nrOrcamento: nr, linhas, situacaoErp: 0 };
 }
 
@@ -946,7 +958,7 @@ async function relatorio(config) {
     const p = schema.tabelas.ORCPROD;
     const cmp = (a, b) => (p[a] && p[b] ? `SUM(IIF(${a} = ${b}, 1, 0))` : 'NULL');
     const [c] = await executar(
-      `SELECT COUNT(*) AS Q, ${cmp('CALC', 'QTDPRODUTO')} AS CALC_QTD, ${cmp('QTDEPECA', 'QTDPRODUTO')} AS PECA_QTD,
+      `SELECT COUNT(*) AS Q, ${cmp('CALC', 'QTDPRODUTO')} AS CALC_QTD, ${cmp('CALC', 'VLUNIT')} AS CALC_VLUNIT, ${cmp('QTDEPECA', 'QTDPRODUTO')} AS PECA_QTD,
               ${cmp('SUBTOTAL', 'TOTAL')} AS SUB_TOTAL, ${cmp('QTDELIB', 'QTDPRODUTO')} AS LIB_QTD
          FROM (SELECT FIRST 200 * FROM ORCPROD WHERE IDEMPRESA = ? ORDER BY NRORCAMENTO DESC)`,
       [idEmpresa]
@@ -993,15 +1005,19 @@ async function relatorio(config) {
       if (ultimo) {
         saida.casa.ultimoDoMotor = await compararComACasa(config, Number(ultimo.nrorcamento));
         saida.casa.comparacaoDireta = await compararDois(config, Number(ultimo.nrorcamento));
-        try {
-          saida.historico = await investigarHistorico(Number(ultimo.nrorcamento), saida.casa.comparacaoDireta.casa);
-        } catch (err) {
-          saida.historico = { erro: err.message };
-        }
       }
     }
   } catch (err) {
     saida.casa = { erro: err.message };
+  }
+
+  try {
+    _historico = null;
+    const h = await comoGravarHistorico(schema, config);
+    const lido = /** @type {any} */ (_historico);
+    saida.historicoAutomec = { ...h, referenciaDaCasa: lido ? lido.contexto : null };
+  } catch (err) {
+    saida.historicoAutomec = { erro: err.message };
   }
 
   try {
@@ -1209,138 +1225,175 @@ async function compararDois(config, nrMotor, nrCasa = null, local = false) {
   return saida;
 }
 
-// ── Histórico do Automec ─────────────────────────────────────────────────────
+// ── Histórico do Automec (a aba "Histórico" do orçamento) ────────────────────
+//
+// O Automec grava uma linha em SIS_APPHISTORY a cada inclusão e alteração pela
+// procedure SP_ADDHISTORY(IDMENUITEM, TIPO, CONTEXTO, MENSAGEM, IDUSUARIO). Quem
+// chama é o PROGRAMA, não um gatilho — por isso o orçamento do Motor nascia sem
+// histórico (JPR, 23/11). O que a casa grava para orçamento:
+//   IDMENUITEM  a tela de orçamento (15 na JPR) — aprendido da casa, não fixo;
+//   TIPO        1 = incluir, 2 = alterar;
+//   CONTEXTO    'NRORCAMENTO=199177;IDEMPRESA=1;';
+//   MENSAGEM    as colunas preenchidas (inclusão) ou alteradas, separadas e
+//               terminadas por ';', cortada no tamanho da coluna (80):
+//               'CDVENDEDOR;CLIENTE;CDMUNICIPIO;VLTOTAL;IDENDERECO;...';
+//   IDUSUARIO   o usuário logado no Automec. O Motor usa o 1 (decisão do dono,
+//               23/11); extras.HISTORICO.IDUSUARIO no servidor troca sem release.
+// ID, DATA_HORA, DTALTER e SIST_ALT o próprio banco preenche.
+//
+// O histórico é acessório: falhar ao gravá-lo vira aviso e nunca derruba o
+// orçamento. No Firebird o comando que falha desfaz só a si mesmo, não a
+// transação.
 
-const PALAVRAS_DE_LOG = ['HIST', 'LOG', 'AUDIT', 'ALTERA', 'OCORR', 'RASTRO'];
+const ORDEM_DO_HISTORICO = ['CDVENDEDOR', 'CLIENTE', 'CDMUNICIPIO', 'VLTOTAL', 'CDTPENTREGA', 'IDENDERECO', 'CDPROPAGANDA', 'CDCLIENTE', 'BAIRRO'];
+const FORA_DO_HISTORICO = new Set(['NRORCAMENTO', 'IDEMPRESA', COLUNA_ZR]);
+const COLUNAS_DO_HISTORICO = ['IDMENUITEM', 'TIPO', 'CONTEXTO', 'MENSAGEM', 'IDUSUARIO'];
+const CONTEXTO_DE_ORCAMENTO = /^NRORCAMENTO=\d+;IDEMPRESA=\d+;$/;
+const TIPO_INCLUIR = 1;
+const TIPO_ALTERAR = 2;
+const USUARIO_DO_HISTORICO = 1;
 
-function textoCurto(v, limite = 160) {
-  if (v === null || v === undefined) return null;
-  if (Buffer.isBuffer(v)) v = fixEncoding(v);
-  if (v instanceof Date) return v.toISOString();
-  const t = String(v).trim();
-  return t.length > limite ? `${t.slice(0, limite)}…(${t.length})` : t;
-}
+/** @type {{ em: number, procedure: boolean, idMenuItem: number | null, contexto: string | null } | null} */
+let _historico = null;
+
+const inteiro = v => (v !== null && v !== undefined && v !== '' && Number.isInteger(Number(v)) ? Number(v) : null);
 
 /**
- * Onde o Automec guarda o histórico do orçamento (a aba "Histórico": Incluir,
- * campos alterados, data, usuário) — o orçamento do Motor não aparece lá
- * (JPR, 23/11). Responde, sem gravar nada:
- *  - os gatilhos de ORCAMENTO/ORCPROD e do banco (conexão/transação), com o
- *    trecho do código que insere em outra tabela ou lê contexto da sessão;
- *  - as tabelas com nome de log/histórico, as colunas e as últimas linhas que
- *    citam ORCAMENTO ou o número de um orçamento da casa e do Motor;
- *  - as procedures que gravam nessas tabelas.
+ * Como gravar o histórico neste Automec, ou por que não dá.
+ * @returns {Promise<{ modo: 'procedure'|'tabela'|null, idMenuItem: number|null, idUsuario: number, tamanhoMensagem: number, motivo: string|null }>}
  */
-async function investigarHistorico(nrMotor, nrCasa) {
-  /** @type {any} */
-  const saida = { gatilhos: [], tabelas: [], procedures: [] };
+async function comoGravarHistorico(schema, config) {
+  const extras = config && config.extras && typeof config.extras === 'object' ? config.extras : {};
+  const ajuste = extras.HISTORICO && typeof extras.HISTORICO === 'object' ? extras.HISTORICO : {};
+  const h = schema.tabelas.SIS_APPHISTORY || {};
+  const base = {
+    modo: null,
+    idMenuItem: null,
+    idUsuario: inteiro(ajuste.IDUSUARIO) ?? USUARIO_DO_HISTORICO,
+    tamanhoMensagem: (h.MENSAGEM && h.MENSAGEM.tamanho) || 80,
+    motivo: null
+  };
+  if (ajuste.desligado === true) return { ...base, motivo: 'desligado no servidor (extras.HISTORICO.desligado).' };
+  if (!COLUNAS_DO_HISTORICO.every(c => h[c])) return { ...base, motivo: 'este Automec não tem a tabela SIS_APPHISTORY.' };
 
-  const gatilhos = await executar(
-    `SELECT TRIM(RDB$TRIGGER_NAME) AS N, TRIM(RDB$RELATION_NAME) AS R, RDB$TRIGGER_TYPE AS T,
-            COALESCE(RDB$TRIGGER_INACTIVE, 0) AS I,
-            CAST(SUBSTRING(RDB$TRIGGER_SOURCE FROM 1 FOR 4000) AS VARCHAR(4000) CHARACTER SET OCTETS) AS S
-       FROM RDB$TRIGGERS
-      WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0
-        AND (TRIM(RDB$RELATION_NAME) IN ('ORCAMENTO', 'ORCPROD') OR RDB$RELATION_NAME IS NULL)`
-  );
-  for (const g of gatilhos) {
-    const fonte = g.s === null || g.s === undefined ? '' : fixEncoding(g.s);
-    const grava = [...new Set((fonte.match(/INSERT\s+INTO\s+([A-Z0-9_$"]+)/gi) || []).map(x => x.split(/\s+/).pop()))];
-    saida.gatilhos.push({
-      nome: String(g.n).trim(),
-      tabela: g.r === null ? '(banco)' : String(g.r).trim(),
-      tipo: Number(g.t),
-      inativo: Number(g.i) === 1,
-      gravaEm: grava,
-      usaContexto: /RDB\$GET_CONTEXT|CURRENT_USER|CURRENT_ROLE/i.test(fonte),
-      trecho: textoCurto(fonte.replace(/\s+/g, ' '), 600)
-    });
-  }
-
-  const filtro = PALAVRAS_DE_LOG.map(() => 'RDB$RELATION_NAME CONTAINING CAST(? AS VARCHAR(20))').join(' OR ');
-  const porNome = await executar(
-    `SELECT TRIM(RDB$RELATION_NAME) AS N FROM RDB$RELATIONS
-      WHERE RDB$VIEW_BLR IS NULL AND COALESCE(RDB$SYSTEM_FLAG, 0) = 0 AND (${filtro})`,
-    PALAVRAS_DE_LOG
-  );
-  // O histórico da aba do orçamento ("Operação | Campos alterados | Data |
-  // Usuário") pode morar numa tabela sem HIST/LOG no nome: procura também
-  // pelas COLUNAS.
-  const porColuna = await executar(
-    `SELECT DISTINCT TRIM(rf.RDB$RELATION_NAME) AS N FROM RDB$RELATION_FIELDS rf
-       JOIN RDB$RELATIONS r ON r.RDB$RELATION_NAME = rf.RDB$RELATION_NAME
-      WHERE r.RDB$VIEW_BLR IS NULL AND COALESCE(r.RDB$SYSTEM_FLAG, 0) = 0
-        AND (rf.RDB$FIELD_NAME CONTAINING 'CAMPO' OR rf.RDB$FIELD_NAME CONTAINING 'OPERAC'
-          OR rf.RDB$FIELD_NAME CONTAINING 'ALTERAD' OR rf.RDB$FIELD_NAME CONTAINING 'NOMETAB'
-          OR TRIM(rf.RDB$FIELD_NAME) IN ('TABELA', 'ACAO', 'EVENTO'))`
-  );
-  const tabelas = [...new Map([...porColuna, ...porNome].map(t => [String(t.n).trim(), t])).values()];
-  saida.candidatas = tabelas.map(t => String(t.n).trim());
-  for (const { n } of tabelas.slice(0, 40)) {
-    const tabela = String(n).trim();
-    if (!/^[A-Z0-9_$]{1,63}$/.test(tabela)) continue;
-    /** @type {any} */
-    const info = { tabela };
-    try {
-      const cols = await executar(
-        `SELECT TRIM(rf.RDB$FIELD_NAME) AS C, f.RDB$FIELD_TYPE AS T, f.RDB$CHARACTER_LENGTH AS L
-           FROM RDB$RELATION_FIELDS rf JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = rf.RDB$FIELD_SOURCE
-          WHERE TRIM(rf.RDB$RELATION_NAME) = ? ORDER BY rf.RDB$FIELD_POSITION`,
-        [tabela]
-      );
-      const colunas = cols.map(c => ({ c: String(c.c).trim(), t: Number(c.t), l: Number(c.l) || null }));
-      info.colunas = colunas.map(c => `${c.c}:${TIPO_NOMES[c.t] || c.t}${c.l ? `(${c.l})` : ''}`);
-      const [{ q }] = await executar(`SELECT COUNT(*) AS Q FROM ${tabela}`);
-      info.linhas = Number(q);
-      const textos = colunas.filter(c => TIPO_TEXTO.has(c.t) || c.t === TIPO_BLOB);
-      // Linhas que citam ORCAMENTO, ou o número de um orçamento da casa/Motor.
-      const sel = colunas.map(c =>
-        TIPO_TEXTO.has(c.t) || c.t === TIPO_BLOB
-          ? `CAST(SUBSTRING(${c.c} FROM 1 FOR 300) AS VARCHAR(300) CHARACTER SET OCTETS) AS ${c.c}`
-          : c.c
-      ).join(', ');
-      for (const [rotulo, alvo] of [['assinatura', 'CDVENDEDOR;CLIENTE'], ['citaOrcamento', 'ORCAMENTO'], ['casa', nrCasa], ['motor', nrMotor]]) {
-        if (!alvo || !textos.length) continue;
-        // CAST no parâmetro: sem ele o Firebird o tipa pela coluna, e um texto
-        // maior que ela derruba a consulta ("string right truncation").
-        const onde = textos.map(c => `${c.c} CONTAINING CAST(? AS VARCHAR(100))`).join(' OR ');
-        const numericas = colunas.filter(c => TIPOS_NUMERICOS.has(c.t)).map(c => c.c);
-        const numerico = rotulo === 'casa' || rotulo === 'motor';
-        const ondeNum = numerico && numericas.length ? ` OR ${numericas.map(c => `${c} = CAST(? AS BIGINT)`).join(' OR ')}` : '';
-        const params = [...textos.map(() => String(alvo)), ...(ondeNum ? numericas.map(() => Number(alvo)) : [])];
-        const ordem = colunas.some(c => c.c === 'ID') ? ' ORDER BY ID DESC' : '';
-        const linhas = await executar(`SELECT FIRST 2 ${sel} FROM ${tabela} WHERE ${onde}${ondeNum}${ordem}`, params);
-        info[rotulo] = linhas.map(l => {
-          /** @type {Record<string, any>} */
-          const o = {};
-          for (const c of colunas) o[c.c] = textoCurto(l[c.c.toLowerCase()]);
-          return o;
-        });
-      }
-    } catch (err) {
-      info.erro = err.message;
-    }
-    saida.tabelas.push(info);
-  }
-
-  // Procedures que gravam numa dessas tabelas: o Automec pode chamar uma ao salvar.
-  const nomes = saida.tabelas.map(t => t.tabela);
-  if (nomes.length) {
-    const procs = await executar(
-      `SELECT TRIM(RDB$PROCEDURE_NAME) AS N,
-              CAST(SUBSTRING(RDB$PROCEDURE_SOURCE FROM 1 FOR 4000) AS VARCHAR(4000) CHARACTER SET OCTETS) AS S
-         FROM RDB$PROCEDURES WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0`
+  if (!_historico || Date.now() - _historico.em > CACHE_MUNICIPIO_MS) {
+    // A procedure, só se tiver os 5 parâmetros na ordem que o Automec usa.
+    const params = await executar(
+      `SELECT TRIM(RDB$PARAMETER_NAME) AS N FROM RDB$PROCEDURE_PARAMETERS
+        WHERE TRIM(RDB$PROCEDURE_NAME) = 'SP_ADDHISTORY' AND RDB$PARAMETER_TYPE = 0
+        ORDER BY RDB$PARAMETER_NUMBER`
     );
-    for (const pr of procs) {
-      const fonte = pr.s === null || pr.s === undefined ? '' : fixEncoding(pr.s);
-      const usa = nomes.filter(n => new RegExp(`\\b${n}\\b`, 'i').test(fonte));
-      if (usa.length) saida.procedures.push({ nome: String(pr.n).trim(), tabelas: usa, trecho: textoCurto(fonte.replace(/\s+/g, ' '), 400) });
-    }
+    const procedure = params.map(x => String(x.n).trim()).join(',') === COLUNAS_DO_HISTORICO.join(',');
+    // Uma linha de orçamento gravada pela casa: dá a tela (IDMENUITEM) e
+    // confirma o formato do CONTEXTO. Sem ORDER BY de propósito — a tabela tem
+    // milhões de linhas (1,4 mi na JPR) e não há índice conhecido em CONTEXTO:
+    // assim o Firebird para na primeira que achar.
+    const tam = Math.max(1, (h.CONTEXTO && h.CONTEXTO.tamanho) || 50);
+    const [ref] = await executar(
+      `SELECT FIRST 1 IDMENUITEM, CAST(CONTEXTO AS VARCHAR(${tam}) CHARACTER SET OCTETS) AS C
+         FROM SIS_APPHISTORY WHERE CONTEXTO STARTING WITH 'NRORCAMENTO=' AND IDMENUITEM IS NOT NULL`
+    );
+    const contexto = ref && ref.c !== null && ref.c !== undefined ? fixEncoding(ref.c).trim() : null;
+    _historico = {
+      em: Date.now(),
+      procedure,
+      idMenuItem: ref && contexto && CONTEXTO_DE_ORCAMENTO.test(contexto) ? inteiro(ref.idmenuitem) : null,
+      contexto
+    };
   }
-  return saida;
+
+  const idMenuItem = inteiro(ajuste.IDMENUITEM) ?? _historico.idMenuItem;
+  if (!idMenuItem) {
+    return {
+      ...base,
+      motivo: _historico.contexto
+        ? `o histórico de orçamento da casa tem outro formato ("${_historico.contexto}").`
+        : 'a casa nunca gravou histórico de orçamento: sem a tela (IDMENUITEM) para copiar.'
+    };
+  }
+  return { ...base, modo: _historico.procedure ? 'procedure' : 'tabela', idMenuItem };
 }
 
-const TIPO_NOMES = { 7: 'SMALLINT', 8: 'INTEGER', 10: 'FLOAT', 12: 'DATE', 13: 'TIME', 14: 'CHAR', 16: 'BIGINT', 27: 'DOUBLE', 35: 'TIMESTAMP', 37: 'VARCHAR', 261: 'BLOB' };
+/** 'CDVENDEDOR;CLIENTE;...;' na ordem do Automec, cortada no tamanho da coluna. */
+function mensagemDoHistorico(colunas, tamanho = 80) {
+  const unicas = [...new Set(colunas)].filter(c => !FORA_DO_HISTORICO.has(c));
+  const ordenadas = [
+    ...ORDEM_DO_HISTORICO.filter(c => unicas.includes(c)),
+    ...unicas.filter(c => !ORDEM_DO_HISTORICO.includes(c))
+  ];
+  return ordenadas.map(c => `${c};`).join('').slice(0, tamanho);
+}
+
+/** Uma linha na aba Histórico do orçamento. Falha vira aviso. */
+async function registrarHistorico(tx, ctx, tipo, nr, colunas) {
+  const h = ctx.historico;
+  if (!h || !h.modo) return false;
+  const params = [h.idMenuItem, tipo, `NRORCAMENTO=${nr};IDEMPRESA=${ctx.idEmpresa};`, mensagemDoHistorico(colunas, h.tamanhoMensagem), h.idUsuario];
+  try {
+    // EXECUTE, não SELECT: a SP_ADDHISTORY tem SUSPEND sem RETURNS, e o
+    // Firebird recusa o SELECT ("procedure does not return any values").
+    await tx.query(
+      h.modo === 'procedure'
+        ? 'EXECUTE PROCEDURE SP_ADDHISTORY(?, ?, ?, ?, ?)'
+        : 'INSERT INTO SIS_APPHISTORY (IDMENUITEM, TIPO, CONTEXTO, MENSAGEM, IDUSUARIO) VALUES (?, ?, ?, ?, ?)',
+      params
+    );
+    return true;
+  } catch (err) {
+    ctx.avisos.push(`Histórico do Automec não gravado: ${String(err.message).slice(0, 160)}`);
+    return false;
+  }
+}
+
+/** O valor gravado difere do novo? Texto compara como vai ser gravado (WIN1252, cortado). */
+function valorMudou(def, antes, depois, modoTexto) {
+  const vazio = v => v === null || v === undefined || v === '';
+  if (def.texto) {
+    const a = vazio(antes) ? '' : (Buffer.isBuffer(antes) ? fixEncoding(antes) : String(antes)).trim();
+    const t = vazio(depois) ? null : textoParaErp(depois, def.tamanho, modoTexto);
+    return a !== (t === null || t === undefined ? '' : String(t).trim());
+  }
+  if (vazio(antes) || vazio(depois)) return vazio(antes) !== vazio(depois);
+  if (antes instanceof Date || depois instanceof Date) return new Date(antes).getTime() !== new Date(depois).getTime();
+  // Meio centavo: o NUMERIC(15,4) do PERC_DESCONTO devolve arredondado.
+  return Math.abs(Number(antes) - Number(depois)) >= 0.005;
+}
+
+/** As colunas do cabeçalho que a atualização vai mudar de fato. */
+async function colunasQueMudam(tx, schema, nr, idEmpresa, valores, modoTexto) {
+  const defs = schema.tabelas.ORCAMENTO;
+  const cols = Object.keys(valores).filter(c => defs[c] && !defs[c].blob);
+  if (!cols.length) return [];
+  const sel = cols
+    .map(c => (defs[c].texto ? `CAST(${c} AS VARCHAR(${Math.max(1, defs[c].tamanho || 1)}) CHARACTER SET OCTETS) AS ${c}` : c))
+    .join(', ');
+  const [atual] = await tx.query(`SELECT ${sel} FROM ORCAMENTO WHERE NRORCAMENTO = ? AND IDEMPRESA = ?`, [nr, idEmpresa]);
+  if (!atual) return [];
+  return cols.filter(c => valorMudou(defs[c], atual[c.toLowerCase()], valores[c], modoTexto));
+}
+
+/** Os itens do orçamento são outros (produto, quantidade, preço ou total)? */
+async function itensQueMudam(tx, schema, nr, idEmpresa, p) {
+  const op = schema.tabelas.ORCPROD;
+  if (!['CDPRODUTO', 'QTDPRODUTO', 'VLUNIT', 'TOTAL'].every(c => op[c])) return true;
+  const antes = await tx.query(
+    `SELECT CDPRODUTO, QTDPRODUTO, VLUNIT, TOTAL FROM ORCPROD WHERE NRORCAMENTO = ? AND IDEMPRESA = ?${op.POSIC ? ' ORDER BY POSIC' : ''}`,
+    [nr, idEmpresa]
+  );
+  const depois = linhasDoPedido(p);
+  if (antes.length !== depois.length) return true;
+  const difere = (a, b, tolerancia) => Math.abs(Number(a) - Number(b)) >= tolerancia;
+  return depois.some((l, i) => {
+    const a = antes[i];
+    const cd = Buffer.isBuffer(a.cdproduto) ? fixEncoding(a.cdproduto) : String(a.cdproduto);
+    return (
+      cd.trim() !== String(l.cdproduto).trim() ||
+      difere(a.qtdproduto, l.quantidade, 0.0005) ||
+      difere(a.vlunit, l.valorUnitario, 0.005) ||
+      difere(a.total, l.total, 0.005)
+    );
+  });
+}
 
 /** Zera os caches (o servidor mudou a configuração, ou um teste quer recomeçar). */
 function esquecerCaches() {
@@ -1349,6 +1402,7 @@ function esquecerCaches() {
   _validacao = null;
   _texto = null;
   _municipios.clear();
+  _historico = null;
 }
 
 module.exports = {
@@ -1356,7 +1410,6 @@ module.exports = {
   garantirColunaZr,
   compararComACasa,
   compararDois,
-  investigarHistorico,
   relatorio,
   esquecerCaches,
   // exportados para teste
@@ -1369,5 +1422,8 @@ module.exports = {
   linhasDoPedido,
   cabecalhoVariavel,
   chaveDeNome,
+  mensagemDoHistorico,
+  valorMudou,
+  comoGravarHistorico,
   ErroDefinitivo
 };

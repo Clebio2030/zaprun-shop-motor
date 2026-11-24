@@ -104,7 +104,10 @@ O Motor também **escreve** no Automec: o pedido da Loja vira orçamento
 | TPB montado à mão passado ao `db.transaction()` | o updater preserva o `node_modules` e há máquina com node-firebird 2.x, que põe versão/escrita/espera sozinho: o TPB da 1.x vira `[3, 3, ...]` e o Firebird recusa ("isc_tpb_shared requires table name"). Use `parametrosDaTransacao()` |
 | Deixar nulo o que o Automec da casa sempre preenche | o orçamento existe no banco e não aparece na tela do Automec (JPR, 23/11). `perfilDaCasa` copia códigos e prazos; teste em `tools/fb-teste/testar-casa.js` |
 | Item com STATUS 'FF' (da Pontual), ou endereço do balcão na retirada | o dono definiu: item EN (entrega) / RM (retirada); retirada sem endereço. Numeração pula `SAIDAESTOQUE.NRORCAMENTO` (`tools/fb-teste/testar-jpr.js`) |
-| Valor fixo da Pontual em CALC/QTDELIB | o Automec da casa preenche diferente (JPR: QTDELIB = quantidade em 0 de 200 itens). Copie a convenção dos últimos itens |
+| Valor fixo da Pontual em QTDELIB/QTDEPECA | o Automec da casa preenche diferente (JPR: QTDELIB = quantidade em 0 de 200 itens). Copie a convenção dos últimos itens |
+| CALC do item = quantidade | o dono definiu (23/11): CALC = VLUNIT, sempre. Não volte a copiar a casa nessa coluna |
+| Orçamento sem linha em `SIS_APPHISTORY` | não aparece na aba Histórico do Automec — quem grava é o programa (`SP_ADDHISTORY`), não gatilho. `EXECUTE PROCEDURE`, nunca `SELECT` (SUSPEND sem RETURNS). Falha no histórico nunca derruba o orçamento (`tools/fb-teste/testar-historico.js`) |
+| Buscar em `SIS_APPHISTORY` com ORDER BY ou CONTAINING | 1,4 milhão de linhas na JPR, e não há índice conhecido em CONTEXTO: risco de varredura inteira. `FIRST 1` sem ORDER BY para no primeiro achado |
 
 ## Release
 

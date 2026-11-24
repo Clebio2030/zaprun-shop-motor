@@ -111,7 +111,7 @@ async function contar() {
   assert.strictEqual(itens[1].idpreco, 4, 'idpreco do servidor');
   assert.strictEqual(itens[1].cddeposito, 2);
   assert.strictEqual(String(itens[0].status).trim(), 'EN', 'entrega: item EN');
-  assert.strictEqual(Number(itens[1].calc), 1.5);
+  assert.deepStrictEqual(itens.map(i => Number(i.calc)), [9.95, 20, 8], 'CALC = valor unitário');
   assert.strictEqual(fixEncoding(itens[1].descricao), 'CARVÃO 5KG');
 
   // 3. Internet caiu antes de o servidor saber o número: acha pela ZR_PEDIDO.

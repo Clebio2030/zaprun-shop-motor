@@ -38,19 +38,20 @@ async function existe(tabela, coluna) {
   if (!(await existe('SAIDAESTOQUE'))) {
     await executar('CREATE TABLE SAIDAESTOQUE (NRPEDIDO INTEGER NOT NULL PRIMARY KEY, IDEMPRESA INTEGER, NRORCAMENTO INTEGER, DTSAIDA DATE, STATUS INTEGER)');
   }
-  await executar("UPDATE CLIENTE SET ENDERECO = 'AV. DA LOJA, 500', BAIRRO = 'CENTRO', CEP = '58000-000', UF = 'PB', CDMUNICIPIO = 2507507 WHERE CDCLIENTE = 1 AND IDEMPRESA = 1");
-  // Venda que já cita o próximo número (7301) e o seguinte (7302).
-  await executar('DELETE FROM SAIDAESTOQUE WHERE NRPEDIDO IN (1, 2)');
-  await executar("INSERT INTO SAIDAESTOQUE (NRPEDIDO, IDEMPRESA, NRORCAMENTO, DTSAIDA, STATUS) VALUES (1, 1, 7301, '2026-11-10', 1)");
-  await executar("INSERT INTO SAIDAESTOQUE (NRPEDIDO, IDEMPRESA, NRORCAMENTO, DTSAIDA, STATUS) VALUES (2, 1, 7302, '2026-11-11', 1)");
-  // Itens da casa com STATUS vazio (12 orçamentos antigos).
-  for (let i = 0; i < 12; i++) {
-    await executar("INSERT INTO ORCAMENTO (NRORCAMENTO, IDEMPRESA, CDCLIENTE, DTORC, STATUS, CLIENTE) VALUES (?, 1, 1, '2026-11-01', 1, '*CASA')", [7250 + i]);
-    await executar("INSERT INTO ORCPROD (POSIC, NRORCAMENTO, IDEMPRESA, CDPRODUTO, QTDPRODUTO, VLUNIT, TOTAL, STATUS, ORDEM) VALUES (1, ?, 1, '1201', 1, 1, 1, '', 'A')", [7250 + i]);
-  }
-  orc.esquecerCaches();
+  // Daqui em diante tudo sai no finally, mesmo se a conexão cair no meio.
   let nr = null;
   try {
+    await executar("UPDATE CLIENTE SET ENDERECO = 'AV. DA LOJA, 500', BAIRRO = 'CENTRO', CEP = '58000-000', UF = 'PB', CDMUNICIPIO = 2507507 WHERE CDCLIENTE = 1 AND IDEMPRESA = 1");
+    // Venda que já cita o próximo número (7301) e o seguinte (7302).
+    await executar('DELETE FROM SAIDAESTOQUE WHERE NRPEDIDO IN (1, 2)');
+    await executar("INSERT INTO SAIDAESTOQUE (NRPEDIDO, IDEMPRESA, NRORCAMENTO, DTSAIDA, STATUS) VALUES (1, 1, 7301, '2026-11-10', 1)");
+    await executar("INSERT INTO SAIDAESTOQUE (NRPEDIDO, IDEMPRESA, NRORCAMENTO, DTSAIDA, STATUS) VALUES (2, 1, 7302, '2026-11-11', 1)");
+    // Itens da casa com STATUS vazio (12 orçamentos antigos).
+    for (let i = 0; i < 12; i++) {
+      await executar("INSERT INTO ORCAMENTO (NRORCAMENTO, IDEMPRESA, CDCLIENTE, DTORC, STATUS, CLIENTE) VALUES (?, 1, 1, '2026-11-01', 1, '*CASA')", [7250 + i]);
+      await executar("INSERT INTO ORCPROD (POSIC, NRORCAMENTO, IDEMPRESA, CDPRODUTO, QTDPRODUTO, VLUNIT, TOTAL, STATUS, ORDEM) VALUES (1, ?, 1, '1201', 1, 1, 1, '', 'A')", [7250 + i]);
+    }
+    orc.esquecerCaches();
     const p = { pedidoId: 930001, numero: 88, criadoEm: new Date().toISOString(), versao: 'v', hash: 'h', cancelado: false,
       cliente: { nome: '*RETIRA NA LOJA', telefone: '83999990000', cpf: null }, modalidade: 'retirada', entrega: null,
       itens: [{ cdproduto: '1201', descricao: 'CERVEJA', quantidade: 2, valorUnitario: 5, total: 10, idpreco: null }],

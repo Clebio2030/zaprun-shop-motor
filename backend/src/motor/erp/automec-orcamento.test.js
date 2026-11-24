@@ -44,7 +44,31 @@ test('HORAORC no zero do Delphi quando o Automec guarda assim', () => {
   assert.strictEqual(d.DTORC.getHours(), 0);
 });
 
-test('regra copiada do Automec da casa para CALC/QTDELIB/QTDEPECA', () => {
+test('histórico: colunas na ordem do Automec, com ";" e cortadas em 80', () => {
+  const { mensagemDoHistorico } = require('./automec-orcamento');
+  const m = mensagemDoHistorico(['NRORCAMENTO', 'IDEMPRESA', 'CDCLIENTE', 'DTORC', 'CDVENDEDOR', 'CLIENTE', 'ZR_PEDIDO', 'VLTOTAL', 'OBSERVACAO']);
+  assert.strictEqual(m, 'CDVENDEDOR;CLIENTE;VLTOTAL;CDCLIENTE;DTORC;OBSERVACAO;', 'chave e ZR_PEDIDO ficam de fora');
+  // O da JPR (23/11), exatamente 80 caracteres.
+  const jpr = mensagemDoHistorico(['CDVENDEDOR', 'CLIENTE', 'CDMUNICIPIO', 'VLTOTAL', 'IDENDERECO', 'CDPROPAGANDA', 'CDCLIENTE', 'BAIRRO', 'CEP', 'UF']);
+  assert.strictEqual(jpr, 'CDVENDEDOR;CLIENTE;CDMUNICIPIO;VLTOTAL;IDENDERECO;CDPROPAGANDA;CDCLIENTE;BAIRRO;');
+  assert.strictEqual(mensagemDoHistorico(['STATUS'], 80), 'STATUS;');
+});
+
+test('histórico: o que conta como alteração', () => {
+  const { valorMudou } = require('./automec-orcamento');
+  const texto = { texto: true, tamanho: 10 };
+  const numero = { texto: false };
+  assert.strictEqual(valorMudou(texto, Buffer.from('JOS\xc9      ', 'latin1'), 'JOSÉ', 'win1252'), false, 'CHAR com espaços e WIN1252');
+  assert.strictEqual(valorMudou(texto, 'ABCDEFGHIJ', 'ABCDEFGHIJKLM', 'win1252'), false, 'compara já cortado no tamanho');
+  assert.strictEqual(valorMudou(texto, null, '', 'win1252'), false);
+  assert.strictEqual(valorMudou(texto, 'A', 'B', 'win1252'), true);
+  assert.strictEqual(valorMudou(numero, 7.3746, 7.37463768, 'win1252'), false, 'NUMERIC(15,4) arredondado');
+  assert.strictEqual(valorMudou(numero, 62.85, 62.7, 'win1252'), true);
+  assert.strictEqual(valorMudou(numero, null, 0, 'win1252'), true);
+  assert.strictEqual(valorMudou(numero, null, null, 'win1252'), false);
+});
+
+test('regra copiada do Automec da casa para QTDELIB/QTDEPECA', () => {
   const { valorDaRegra } = require('./automec-orcamento');
   assert.strictEqual(valorDaRegra('qtd', 2.5), 2.5);
   assert.strictEqual(valorDaRegra('zero', 2.5), 0);
