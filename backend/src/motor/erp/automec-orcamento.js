@@ -1257,13 +1257,26 @@ async function investigarHistorico(nrMotor, nrCasa) {
     });
   }
 
-  const filtro = PALAVRAS_DE_LOG.map(() => 'RDB$RELATION_NAME CONTAINING ?').join(' OR ');
-  const tabelas = await executar(
+  const filtro = PALAVRAS_DE_LOG.map(() => 'RDB$RELATION_NAME CONTAINING CAST(? AS VARCHAR(20))').join(' OR ');
+  const porNome = await executar(
     `SELECT TRIM(RDB$RELATION_NAME) AS N FROM RDB$RELATIONS
       WHERE RDB$VIEW_BLR IS NULL AND COALESCE(RDB$SYSTEM_FLAG, 0) = 0 AND (${filtro})`,
     PALAVRAS_DE_LOG
   );
-  for (const { n } of tabelas.slice(0, 25)) {
+  // O histórico da aba do orçamento ("Operação | Campos alterados | Data |
+  // Usuário") pode morar numa tabela sem HIST/LOG no nome: procura também
+  // pelas COLUNAS.
+  const porColuna = await executar(
+    `SELECT DISTINCT TRIM(rf.RDB$RELATION_NAME) AS N FROM RDB$RELATION_FIELDS rf
+       JOIN RDB$RELATIONS r ON r.RDB$RELATION_NAME = rf.RDB$RELATION_NAME
+      WHERE r.RDB$VIEW_BLR IS NULL AND COALESCE(r.RDB$SYSTEM_FLAG, 0) = 0
+        AND (rf.RDB$FIELD_NAME CONTAINING 'CAMPO' OR rf.RDB$FIELD_NAME CONTAINING 'OPERAC'
+          OR rf.RDB$FIELD_NAME CONTAINING 'ALTERAD' OR rf.RDB$FIELD_NAME CONTAINING 'NOMETAB'
+          OR TRIM(rf.RDB$FIELD_NAME) IN ('TABELA', 'ACAO', 'EVENTO'))`
+  );
+  const tabelas = [...new Map([...porColuna, ...porNome].map(t => [String(t.n).trim(), t])).values()];
+  saida.candidatas = tabelas.map(t => String(t.n).trim());
+  for (const { n } of tabelas.slice(0, 40)) {
     const tabela = String(n).trim();
     if (!/^[A-Z0-9_$]{1,63}$/.test(tabela)) continue;
     /** @type {any} */
@@ -1286,13 +1299,17 @@ async function investigarHistorico(nrMotor, nrCasa) {
           ? `CAST(SUBSTRING(${c.c} FROM 1 FOR 300) AS VARCHAR(300) CHARACTER SET OCTETS) AS ${c.c}`
           : c.c
       ).join(', ');
-      for (const [rotulo, alvo] of [['citaOrcamento', 'ORCAMENTO'], ['casa', nrCasa], ['motor', nrMotor]]) {
+      for (const [rotulo, alvo] of [['assinatura', 'CDVENDEDOR;CLIENTE'], ['citaOrcamento', 'ORCAMENTO'], ['casa', nrCasa], ['motor', nrMotor]]) {
         if (!alvo || !textos.length) continue;
-        const onde = textos.map(c => `${c.c} CONTAINING ?`).join(' OR ');
+        // CAST no parâmetro: sem ele o Firebird o tipa pela coluna, e um texto
+        // maior que ela derruba a consulta ("string right truncation").
+        const onde = textos.map(c => `${c.c} CONTAINING CAST(? AS VARCHAR(100))`).join(' OR ');
         const numericas = colunas.filter(c => TIPOS_NUMERICOS.has(c.t)).map(c => c.c);
-        const ondeNum = rotulo !== 'citaOrcamento' && numericas.length ? ` OR ${numericas.map(c => `${c} = ?`).join(' OR ')}` : '';
+        const numerico = rotulo === 'casa' || rotulo === 'motor';
+        const ondeNum = numerico && numericas.length ? ` OR ${numericas.map(c => `${c} = CAST(? AS BIGINT)`).join(' OR ')}` : '';
         const params = [...textos.map(() => String(alvo)), ...(ondeNum ? numericas.map(() => Number(alvo)) : [])];
-        const linhas = await executar(`SELECT FIRST 2 ${sel} FROM ${tabela} WHERE ${onde}${ondeNum}`, params);
+        const ordem = colunas.some(c => c.c === 'ID') ? ' ORDER BY ID DESC' : '';
+        const linhas = await executar(`SELECT FIRST 2 ${sel} FROM ${tabela} WHERE ${onde}${ondeNum}${ordem}`, params);
         info[rotulo] = linhas.map(l => {
           /** @type {Record<string, any>} */
           const o = {};
