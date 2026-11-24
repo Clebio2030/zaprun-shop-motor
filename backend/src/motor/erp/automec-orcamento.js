@@ -993,6 +993,11 @@ async function relatorio(config) {
       if (ultimo) {
         saida.casa.ultimoDoMotor = await compararComACasa(config, Number(ultimo.nrorcamento));
         saida.casa.comparacaoDireta = await compararDois(config, Number(ultimo.nrorcamento));
+        try {
+          saida.historico = await investigarHistorico(Number(ultimo.nrorcamento), saida.casa.comparacaoDireta.casa);
+        } catch (err) {
+          saida.historico = { erro: err.message };
+        }
       }
     }
   } catch (err) {
@@ -1204,6 +1209,122 @@ async function compararDois(config, nrMotor, nrCasa = null, local = false) {
   return saida;
 }
 
+// ── Histórico do Automec ─────────────────────────────────────────────────────
+
+const PALAVRAS_DE_LOG = ['HIST', 'LOG', 'AUDIT', 'ALTERA', 'OCORR', 'RASTRO'];
+
+function textoCurto(v, limite = 160) {
+  if (v === null || v === undefined) return null;
+  if (Buffer.isBuffer(v)) v = fixEncoding(v);
+  if (v instanceof Date) return v.toISOString();
+  const t = String(v).trim();
+  return t.length > limite ? `${t.slice(0, limite)}…(${t.length})` : t;
+}
+
+/**
+ * Onde o Automec guarda o histórico do orçamento (a aba "Histórico": Incluir,
+ * campos alterados, data, usuário) — o orçamento do Motor não aparece lá
+ * (JPR, 23/11). Responde, sem gravar nada:
+ *  - os gatilhos de ORCAMENTO/ORCPROD e do banco (conexão/transação), com o
+ *    trecho do código que insere em outra tabela ou lê contexto da sessão;
+ *  - as tabelas com nome de log/histórico, as colunas e as últimas linhas que
+ *    citam ORCAMENTO ou o número de um orçamento da casa e do Motor;
+ *  - as procedures que gravam nessas tabelas.
+ */
+async function investigarHistorico(nrMotor, nrCasa) {
+  /** @type {any} */
+  const saida = { gatilhos: [], tabelas: [], procedures: [] };
+
+  const gatilhos = await executar(
+    `SELECT TRIM(RDB$TRIGGER_NAME) AS N, TRIM(RDB$RELATION_NAME) AS R, RDB$TRIGGER_TYPE AS T,
+            COALESCE(RDB$TRIGGER_INACTIVE, 0) AS I,
+            CAST(SUBSTRING(RDB$TRIGGER_SOURCE FROM 1 FOR 4000) AS VARCHAR(4000) CHARACTER SET OCTETS) AS S
+       FROM RDB$TRIGGERS
+      WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0
+        AND (TRIM(RDB$RELATION_NAME) IN ('ORCAMENTO', 'ORCPROD') OR RDB$RELATION_NAME IS NULL)`
+  );
+  for (const g of gatilhos) {
+    const fonte = g.s === null || g.s === undefined ? '' : fixEncoding(g.s);
+    const grava = [...new Set((fonte.match(/INSERT\s+INTO\s+([A-Z0-9_$"]+)/gi) || []).map(x => x.split(/\s+/).pop()))];
+    saida.gatilhos.push({
+      nome: String(g.n).trim(),
+      tabela: g.r === null ? '(banco)' : String(g.r).trim(),
+      tipo: Number(g.t),
+      inativo: Number(g.i) === 1,
+      gravaEm: grava,
+      usaContexto: /RDB\$GET_CONTEXT|CURRENT_USER|CURRENT_ROLE/i.test(fonte),
+      trecho: textoCurto(fonte.replace(/\s+/g, ' '), 600)
+    });
+  }
+
+  const filtro = PALAVRAS_DE_LOG.map(() => 'RDB$RELATION_NAME CONTAINING ?').join(' OR ');
+  const tabelas = await executar(
+    `SELECT TRIM(RDB$RELATION_NAME) AS N FROM RDB$RELATIONS
+      WHERE RDB$VIEW_BLR IS NULL AND COALESCE(RDB$SYSTEM_FLAG, 0) = 0 AND (${filtro})`,
+    PALAVRAS_DE_LOG
+  );
+  for (const { n } of tabelas.slice(0, 25)) {
+    const tabela = String(n).trim();
+    if (!/^[A-Z0-9_$]{1,63}$/.test(tabela)) continue;
+    /** @type {any} */
+    const info = { tabela };
+    try {
+      const cols = await executar(
+        `SELECT TRIM(rf.RDB$FIELD_NAME) AS C, f.RDB$FIELD_TYPE AS T, f.RDB$CHARACTER_LENGTH AS L
+           FROM RDB$RELATION_FIELDS rf JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = rf.RDB$FIELD_SOURCE
+          WHERE TRIM(rf.RDB$RELATION_NAME) = ? ORDER BY rf.RDB$FIELD_POSITION`,
+        [tabela]
+      );
+      const colunas = cols.map(c => ({ c: String(c.c).trim(), t: Number(c.t), l: Number(c.l) || null }));
+      info.colunas = colunas.map(c => `${c.c}:${TIPO_NOMES[c.t] || c.t}${c.l ? `(${c.l})` : ''}`);
+      const [{ q }] = await executar(`SELECT COUNT(*) AS Q FROM ${tabela}`);
+      info.linhas = Number(q);
+      const textos = colunas.filter(c => TIPO_TEXTO.has(c.t) || c.t === TIPO_BLOB);
+      // Linhas que citam ORCAMENTO, ou o número de um orçamento da casa/Motor.
+      const sel = colunas.map(c =>
+        TIPO_TEXTO.has(c.t) || c.t === TIPO_BLOB
+          ? `CAST(SUBSTRING(${c.c} FROM 1 FOR 300) AS VARCHAR(300) CHARACTER SET OCTETS) AS ${c.c}`
+          : c.c
+      ).join(', ');
+      for (const [rotulo, alvo] of [['citaOrcamento', 'ORCAMENTO'], ['casa', nrCasa], ['motor', nrMotor]]) {
+        if (!alvo || !textos.length) continue;
+        const onde = textos.map(c => `${c.c} CONTAINING ?`).join(' OR ');
+        const numericas = colunas.filter(c => TIPOS_NUMERICOS.has(c.t)).map(c => c.c);
+        const ondeNum = rotulo !== 'citaOrcamento' && numericas.length ? ` OR ${numericas.map(c => `${c} = ?`).join(' OR ')}` : '';
+        const params = [...textos.map(() => String(alvo)), ...(ondeNum ? numericas.map(() => Number(alvo)) : [])];
+        const linhas = await executar(`SELECT FIRST 2 ${sel} FROM ${tabela} WHERE ${onde}${ondeNum}`, params);
+        info[rotulo] = linhas.map(l => {
+          /** @type {Record<string, any>} */
+          const o = {};
+          for (const c of colunas) o[c.c] = textoCurto(l[c.c.toLowerCase()]);
+          return o;
+        });
+      }
+    } catch (err) {
+      info.erro = err.message;
+    }
+    saida.tabelas.push(info);
+  }
+
+  // Procedures que gravam numa dessas tabelas: o Automec pode chamar uma ao salvar.
+  const nomes = saida.tabelas.map(t => t.tabela);
+  if (nomes.length) {
+    const procs = await executar(
+      `SELECT TRIM(RDB$PROCEDURE_NAME) AS N,
+              CAST(SUBSTRING(RDB$PROCEDURE_SOURCE FROM 1 FOR 4000) AS VARCHAR(4000) CHARACTER SET OCTETS) AS S
+         FROM RDB$PROCEDURES WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0`
+    );
+    for (const pr of procs) {
+      const fonte = pr.s === null || pr.s === undefined ? '' : fixEncoding(pr.s);
+      const usa = nomes.filter(n => new RegExp(`\\b${n}\\b`, 'i').test(fonte));
+      if (usa.length) saida.procedures.push({ nome: String(pr.n).trim(), tabelas: usa, trecho: textoCurto(fonte.replace(/\s+/g, ' '), 400) });
+    }
+  }
+  return saida;
+}
+
+const TIPO_NOMES = { 7: 'SMALLINT', 8: 'INTEGER', 10: 'FLOAT', 12: 'DATE', 13: 'TIME', 14: 'CHAR', 16: 'BIGINT', 27: 'DOUBLE', 35: 'TIMESTAMP', 37: 'VARCHAR', 261: 'BLOB' };
+
 /** Zera os caches (o servidor mudou a configuração, ou um teste quer recomeçar). */
 function esquecerCaches() {
   _schema = null;
@@ -1218,6 +1339,7 @@ module.exports = {
   garantirColunaZr,
   compararComACasa,
   compararDois,
+  investigarHistorico,
   relatorio,
   esquecerCaches,
   // exportados para teste
