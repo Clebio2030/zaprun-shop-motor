@@ -354,9 +354,9 @@ não (parcelas, por exemplo). O relatório leva o mesmo em
 - Retirada vai SEM endereço (o balcão pode não ter um — como o orçamento do
   PDV Web da Pontual); entrega leva o endereço do pedido.
 - STATUS do item: **EN** na entrega, **RM** na retirada. Nunca 'FF'.
-- (v1.3.10: o aviso "já aparecem em vendas" vai só para o log da máquina, não para o painel.)
-- Número de orçamento já citado numa venda (`SAIDAESTOQUE.NRORCAMENTO`) é
-  pulado: a JPR tinha venda apontando para o 84478 que o Motor criou.
+- Número: MAX(NRORCAMENTO)+1 do ORCAMENTO da empresa, como o Automec
+  (v1.3.11). As versões 1.3.5 a 1.3.10 pulavam números citados em
+  `SAIDAESTOQUE.NRORCAMENTO` e, na JB Morais, saiu 79123 em vez de 463.
 
 **Dois orçamentos ao mesmo tempo.** O número é lido (MAX+1 da empresa) e
 gravado dentro da mesma transação, com INSERT puro: se outro caixa — ou outro

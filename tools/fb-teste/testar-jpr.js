@@ -3,7 +3,8 @@
 //  - retirada vai SEM endereço, mesmo com o cliente balcão tendo um (como o
 //    orçamento do PDV Web da Pontual);
 //  - STATUS do item: RM na retirada, EN na entrega — nunca 'FF';
-//  - número de orçamento já citado numa venda (SAIDAESTOQUE) é pulado.
+//  - o número é MAX(ORCAMENTO)+1, mesmo com vendas citando números bem maiores
+//    (JB Morais, 26/11: saiu 79123 em vez de 463).
 // Monta e desmonta os próprios dados no banco de TESTE.
 //
 //   FB_PORT=3055 FB_DATABASE=/firebird/data/automec.fdb node tools/fb-teste/testar-jpr.js
@@ -42,10 +43,10 @@ async function existe(tabela, coluna) {
   let nr = null;
   try {
     await executar("UPDATE CLIENTE SET ENDERECO = 'AV. DA LOJA, 500', BAIRRO = 'CENTRO', CEP = '58000-000', UF = 'PB', CDMUNICIPIO = 2507507 WHERE CDCLIENTE = 1 AND IDEMPRESA = 1");
-    // Venda que já cita o próximo número (7301) e o seguinte (7302).
+    // Vendas que citam o próximo número (7301) e um muito maior (79122).
     await executar('DELETE FROM SAIDAESTOQUE WHERE NRPEDIDO IN (1, 2)');
     await executar("INSERT INTO SAIDAESTOQUE (NRPEDIDO, IDEMPRESA, NRORCAMENTO, DTSAIDA, STATUS) VALUES (1, 1, 7301, '2026-11-10', 1)");
-    await executar("INSERT INTO SAIDAESTOQUE (NRPEDIDO, IDEMPRESA, NRORCAMENTO, DTSAIDA, STATUS) VALUES (2, 1, 7302, '2026-11-11', 1)");
+    await executar("INSERT INTO SAIDAESTOQUE (NRPEDIDO, IDEMPRESA, NRORCAMENTO, DTSAIDA, STATUS) VALUES (2, 1, 79122, '2026-11-11', 1)");
     // Itens da casa com STATUS vazio (12 orçamentos antigos).
     for (let i = 0; i < 12; i++) {
       await executar("INSERT INTO ORCAMENTO (NRORCAMENTO, IDEMPRESA, CDCLIENTE, DTORC, STATUS, CLIENTE) VALUES (?, 1, 1, '2026-11-01', 1, '*CASA')", [7250 + i]);
@@ -59,7 +60,7 @@ async function existe(tabela, coluna) {
     const r = await orc.sincronizarPedido(p, cfg, 'gravar');
     nr = r.nrOrcamento;
     console.log('gravou:', r.acao, nr, r.avisos);
-    assert.strictEqual(nr, 7303, 'pula 7301 e 7302, citados em vendas');
+    assert.strictEqual(nr, 7301, 'MAX(ORCAMENTO)+1, como o Automec; vendas não mudam a numeração');
     const [o] = await executar(
       'SELECT CAST(LOCALENTR AS VARCHAR(60) CHARACTER SET OCTETS) AS L, CAST(BAIRRO AS VARCHAR(40) CHARACTER SET OCTETS) AS B, CEP, UF, CDMUNICIPIO FROM ORCAMENTO WHERE NRORCAMENTO = ? AND IDEMPRESA = 1',
       [nr]
@@ -71,8 +72,8 @@ async function existe(tabela, coluna) {
     console.log('item STATUS:', fixEncoding(i.s).trim(), 'ORDEM:', String(i.ordem).trim());
     assert.strictEqual(fixEncoding(i.s).trim(), 'RM', 'retirada: item RM');
     const cmp = await orc.compararDois(cfg, nr, 7250);
-    console.log('vendas ligadas ao 7303:', JSON.stringify(cmp.tabelasLigadas));
-    console.log('\nOK — retirada sem endereço, item RM e número pulando a venda.');
+    console.log('vendas ligadas ao 7301:', JSON.stringify(cmp.tabelasLigadas));
+    console.log('\nOK — retirada sem endereço, item RM e número seguindo o ORCAMENTO.');
   } finally {
     if (nr) {
       await executar('DELETE FROM ORCPROD WHERE IDEMPRESA = 1 AND NRORCAMENTO = ?', [nr]);

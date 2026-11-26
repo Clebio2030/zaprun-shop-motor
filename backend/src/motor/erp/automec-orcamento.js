@@ -793,23 +793,11 @@ async function reconciliar(tx, p, config, ctx) {
       'SELECT COALESCE(MAX(NRORCAMENTO), 0) + 1 AS N FROM ORCAMENTO WHERE IDEMPRESA = ?',
       [ctx.idEmpresa]
     );
-    let nr = Number(n);
-    // Número que uma VENDA já cita (SAIDAESTOQUE.NRORCAMENTO) não pode virar
-    // orçamento novo: o Automec liga os dois e o orçamento some da tela de
-    // abertos. Na JPR (23/11) havia venda apontando para o 84478 que o Motor
-    // acabou de criar. Pula para depois do maior número citado.
-    if (schema.tabelas.SAIDAESTOQUE && schema.tabelas.SAIDAESTOQUE.NRORCAMENTO) {
-      const filtro = schema.tabelas.SAIDAESTOQUE.IDEMPRESA ? ' AND IDEMPRESA = ?' : '';
-      const [{ m }] = await tx.query(
-        `SELECT MAX(NRORCAMENTO) AS M FROM SAIDAESTOQUE WHERE NRORCAMENTO >= ?${filtro}`,
-        filtro ? [nr, ctx.idEmpresa] : [nr]
-      );
-      if (m !== null && m !== undefined && Number(m) >= nr) {
-        // Só no log da máquina: é detalhe de tabela do ERP, que a loja não precisa ver no painel.
-        logInfo(`[Pedidos] Números ${nr} a ${Number(m)} já aparecem em vendas (SAIDAESTOQUE); usei o ${Number(m) + 1}.`);
-        nr = Number(m) + 1;
-      }
-    }
+    // O próximo número é o do próprio Automec: o maior orçamento da empresa + 1.
+    // NÃO pule números por causa de SAIDAESTOQUE.NRORCAMENTO: as versões 1.3.5 a
+    // 1.3.10 pulavam, e na JB Morais (26/11) vendas antigas citavam até 79122 —
+    // o orçamento saiu 79123 em vez de 463, e o balcão passou a numerar dali.
+    const nr = Number(n);
     const vendedor = Number(p.vendedor || config.cdVendedorPadrao || 1);
     const datas = datasDoOrcamento(schema, p.criadoEm, ctx.convencao);
     const valores = aplicarExtras(
