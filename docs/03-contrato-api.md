@@ -310,6 +310,15 @@ guardava o `orderId` interno — orçamentos antigos seguem aceitos) na mesma
 transação: se o resultado não chegar ao servidor, a próxima consulta acha o
 orçamento pela coluna e não duplica.
 
+O número da Loja **se repete**: é `MAX(number)+1` dos pedidos que existem, e
+excluir o último pedido devolve o número ao próximo. Por isso, sem o número do
+orçamento, o Motor procura `ZR_PEDIDO IN (número, pedidoId)` e só aceita o
+orçamento cujo DTORC/HORAORC é o da criação DESTE pedido (o que o Motor grava;
+folga de 2 min). Os outros com o mesmo número são de pedidos excluídos e ficam
+como estão (v1.3.13; na 1.3.12 o pedido novo ficava "travado" no orçamento
+cancelado do excluído, ou regravava o do outro por cima). HORAORC no zero de
+1899 vai com a hora exata do pedido desde a 1.3.13 (antes, 28 s adiantado).
+
 `QTDELIB` e `QTDEPECA` dos itens copiam o Automec da casa (v1.3.1): o
 Motor olha os últimos 200 itens da empresa e, se 80% ou mais têm o valor igual à
 quantidade, zero, nulo ou 1, grava igual; sem maioria, grava a quantidade (como

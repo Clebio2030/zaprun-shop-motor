@@ -394,7 +394,12 @@ function datasDoOrcamento(schema, criadoEm, convencao) {
   let horaorc = quando;
   if (def.HORAORC && def.HORAORC.tipo === TIPO_TIMESTAMP && convencao.horaBase1899) {
     // O zero do TDateTime do Delphi: o Automec guarda só a hora em cima dele.
-    horaorc = new Date(1899, 11, 30, quando.getHours(), quando.getMinutes(), quando.getSeconds());
+    // O node-firebird (1.x e 2.x) converte a data com o fuso em MINUTOS
+    // INTEIROS (getTimezoneOffset), e em 1899 o fuso de São Paulo era a hora
+    // local média, −3:06:28: `new Date(1899, 11, 30, h, m, s)` ia gravado 28 s
+    // adiantado (até a v1.3.12). Esta data faz o driver gravar h:m:s exatos.
+    const desvio = new Date(1899, 11, 30, 12).getTimezoneOffset();
+    horaorc = new Date(Date.UTC(1899, 11, 30, quando.getHours(), quando.getMinutes(), quando.getSeconds()) + desvio * 60000);
   }
   return { DTORC: dtorc, HORAORC: horaorc };
 }
@@ -769,6 +774,34 @@ const pertenceAoPedido = (zrGravado, p) => {
   return gravado === zrDoPedido(p) || gravado === Number(p.pedidoId);
 };
 
+// Folga na hora: os orçamentos gravados até a v1.3.12 têm HORAORC 28 s
+// adiantado (ver datasDoOrcamento), e nos fusos do Brasil essa sobra fica
+// abaixo de 1 min. Dois pedidos com o mesmo número criados com menos de 2 min
+// de diferença, no mesmo dia, exigiriam criar, pagar, excluir e recriar nesse
+// intervalo.
+const FOLGA_DA_HORA_S = 120;
+
+/**
+ * O orçamento (linha com DTORC e, se houver, HORAORC) foi gravado para um
+ * pedido criado em `criadoEm`? Compara a data local e a hora — é o que o Motor
+ * grava (datasDoOrcamento), qualquer que seja a convenção da casa (DTORC com
+ * ou sem hora, HORAORC em 30/12/1899 ou na data real).
+ */
+function nasceuJunto(linha, criadoEm) {
+  const q = new Date(criadoEm);
+  const d = linha && linha.dtorc;
+  if (d instanceof Date && (d.getFullYear() !== q.getFullYear() || d.getMonth() !== q.getMonth() || d.getDate() !== q.getDate())) {
+    return false;
+  }
+  const h = linha && linha.horaorc;
+  if (h instanceof Date) {
+    const segundos = x => x.getHours() * 3600 + x.getMinutes() * 60 + x.getSeconds();
+    const diferenca = Math.abs(segundos(h) - segundos(q));
+    if (Math.min(diferenca, 86400 - diferenca) > FOLGA_DA_HORA_S) return false;
+  }
+  return true;
+}
+
 async function reconciliar(tx, p, config, ctx) {
   const schema = await lerSchema();
   const temZr = existe(schema, 'ORCAMENTO', COLUNA_ZR);
@@ -790,16 +823,30 @@ async function reconciliar(tx, p, config, ctx) {
     atual = linha;
   } else if (temZr) {
     const desde = new Date(new Date(p.criadoEm).getTime() - 2 * 24 * 60 * 60 * 1000);
+    const temHora = existe(schema, 'ORCAMENTO', 'HORAORC');
+    // O número da Loja (v1.3.12) e o pedidoId (orçamentos de até a v1.3.11).
     const linhas = await tx.query(
-      `SELECT NRORCAMENTO, ${colStatus} AS STATUS FROM ORCAMENTO
-        WHERE ${COLUNA_ZR} = ? AND IDEMPRESA = ? AND DTORC >= ?
+      `SELECT NRORCAMENTO, ${colStatus} AS STATUS, ${COLUNA_ZR} AS ZR, DTORC${temHora ? ', HORAORC' : ''} FROM ORCAMENTO
+        WHERE ${COLUNA_ZR} IN (?, ?) AND IDEMPRESA = ? AND DTORC >= ?
         ORDER BY NRORCAMENTO`,
-      [numeroZr, ctx.idEmpresa, new Date(desde.getFullYear(), desde.getMonth(), desde.getDate())]
+      [numeroZr, Number(p.pedidoId), ctx.idEmpresa, new Date(desde.getFullYear(), desde.getMonth(), desde.getDate())]
     );
-    if (linhas.length > 1) {
-      ctx.avisos.push(`${linhas.length} orçamentos com ${COLUNA_ZR}=${numeroZr} (copiados no ERP?); usei o ${linhas[0].nrorcamento}.`);
+    // O número da Loja se REPETE: é MAX+1 dos pedidos que existem, e excluir o
+    // último pedido devolve o número ao próximo. Só vale o orçamento gravado
+    // para ESTE pedido — o Motor grava DTORC/HORAORC com a hora em que o pedido
+    // nasceu (datasDoOrcamento). Sem isto (v1.3.12), o pedido novo com o número
+    // de um excluído ficava "travado" no orçamento cancelado do outro, ou
+    // regravava o orçamento do outro por cima.
+    const meus = linhas.filter(l => nasceuJunto(l, p.criadoEm));
+    for (const l of linhas) {
+      if (!meus.includes(l)) {
+        logInfo(`[Pedidos] Pedido #${p.numero}: o orçamento ${l.nrorcamento} também tem ${COLUNA_ZR}=${l.zr}, mas é de outro pedido com o mesmo número.`);
+      }
     }
-    atual = linhas[0] || null;
+    if (meus.length > 1) {
+      ctx.avisos.push(`${meus.length} orçamentos deste pedido no ERP (copiados?); usei o ${meus[0].nrorcamento}.`);
+    }
+    atual = meus[0] || null;
   }
 
   // 2. Não existe.
@@ -1432,5 +1479,6 @@ module.exports = {
   comoGravarHistorico,
   zrDoPedido,
   pertenceAoPedido,
+  nasceuJunto,
   ErroDefinitivo
 };

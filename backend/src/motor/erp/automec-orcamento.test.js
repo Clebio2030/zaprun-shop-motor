@@ -42,6 +42,11 @@ test('HORAORC no zero do Delphi quando o Automec guarda assim', () => {
   const d = datasDoOrcamento(schema, '2026-11-19T20:15:30.000Z', { horaBase1899: true, dataComHora: false });
   assert.strictEqual(d.HORAORC.getFullYear(), 1899);
   assert.strictEqual(d.DTORC.getHours(), 0);
+  // O que o node-firebird (1.x e 2.x) grava: getTime() − getTimezoneOffset().
+  // Tem de dar a hora local do pedido exata, sem os 28 s do fuso de 1899.
+  const q = new Date('2026-11-19T20:15:30.000Z');
+  const gravado = d.HORAORC.getTime() - d.HORAORC.getTimezoneOffset() * 60000;
+  assert.strictEqual(gravado, Date.UTC(1899, 11, 30, q.getHours(), q.getMinutes(), q.getSeconds()));
 });
 
 test('histórico: colunas na ordem do Automec, com ";" e cortadas em 80', () => {
@@ -93,4 +98,27 @@ test('ZR_PEDIDO usa número da Loja e aceita legado pedidoId na validação', ()
   assert.strictEqual(pertenceAoPedido(359, ped), true, 'legado <= v1.3.11 (pedidoId)');
   assert.strictEqual(pertenceAoPedido(null, ped), true);
   assert.strictEqual(pertenceAoPedido(55, ped), false, 'orçamento de outro pedido');
+});
+
+test('número da Loja repetido: só vale o orçamento gravado na hora em que ESTE pedido nasceu', () => {
+  const { nasceuJunto, datasDoOrcamento } = require('./automec-orcamento');
+  const schemaComHora = { tabelas: { ORCAMENTO: { DTORC: { tipo: 12 }, HORAORC: { tipo: 35 } } } };
+  const criadoEm = '2026-11-26T14:59:48.440Z';
+  // O que o Motor grava para este pedido, nas duas convenções de HORAORC.
+  for (const horaBase1899 of [true, false]) {
+    const d = datasDoOrcamento(schemaComHora, criadoEm, { horaBase1899, dataComHora: false });
+    assert.strictEqual(nasceuJunto({ dtorc: d.DTORC, horaorc: d.HORAORC }, criadoEm), true, `próprio (1899=${horaBase1899})`);
+  }
+  // Gravado até a v1.3.12: HORAORC 28 s adiantado (fuso de 1899).
+  const q = new Date(criadoEm);
+  const adiantado = new Date(1899, 11, 30, q.getHours(), q.getMinutes(), q.getSeconds() + 28);
+  assert.strictEqual(nasceuJunto({ dtorc: new Date(q.getFullYear(), q.getMonth(), q.getDate()), horaorc: adiantado }, criadoEm), true, 'legado com 28 s');
+  // Outro pedido com o mesmo número, criado antes (excluído; número reaproveitado).
+  const outro = datasDoOrcamento(schemaComHora, '2026-11-26T14:12:05.000Z', { horaBase1899: true, dataComHora: false });
+  assert.strictEqual(nasceuJunto({ dtorc: outro.DTORC, horaorc: outro.HORAORC }, criadoEm), false, 'mesmo dia, outra hora');
+  const ontem = datasDoOrcamento(schemaComHora, '2026-11-25T14:59:48.440Z', { horaBase1899: true, dataComHora: false });
+  assert.strictEqual(nasceuJunto({ dtorc: ontem.DTORC, horaorc: ontem.HORAORC }, criadoEm), false, 'mesma hora, outro dia');
+  // Sem HORAORC na tabela, ou nula: decide pela data.
+  assert.strictEqual(nasceuJunto({ dtorc: outro.DTORC }, criadoEm), true);
+  assert.strictEqual(nasceuJunto({ dtorc: outro.DTORC, horaorc: null }, criadoEm), true);
 });
