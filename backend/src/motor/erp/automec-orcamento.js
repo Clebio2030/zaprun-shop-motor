@@ -13,8 +13,9 @@
 // orçamento do balcão. Aqui é INSERT puro: colisão vira erro de chave, e o
 // Motor numera de novo.
 //
-// A ligação pedido ↔ orçamento é a coluna ORCAMENTO.ZR_PEDIDO (o id do pedido
-// no ZapRun), gravada na MESMA transação do orçamento: se a internet cair
+// A ligação pedido ↔ orçamento é a coluna ORCAMENTO.ZR_PEDIDO (o NÚMERO do
+// pedido na Loja, como 55 ou 56), gravada na MESMA transação do orçamento: se
+// a internet cair
 // depois do commit e antes de o servidor saber o número, a próxima consulta
 // acha o orçamento pela coluna e não cria outro.
 
@@ -754,10 +755,25 @@ async function sincronizarPedido(p, config, modo) {
   }
 }
 
+/** Valor gravado em ORCAMENTO.ZR_PEDIDO: número do pedido na Loja (cai no pedidoId se ausente). */
+const zrDoPedido = p => Number(p.numero || p.pedidoId);
+
+/**
+ * Confere se o ZR_PEDIDO já gravado pertence a este pedido. Aceita tanto o
+ * número da Loja (v1.3.12+) quanto o pedidoId interno (legado <= v1.3.11)
+ * para não travar atualizações de orçamentos antigos.
+ */
+const pertenceAoPedido = (zrGravado, p) => {
+  if (zrGravado === null || zrGravado === undefined) return true;
+  const gravado = Number(zrGravado);
+  return gravado === zrDoPedido(p) || gravado === Number(p.pedidoId);
+};
+
 async function reconciliar(tx, p, config, ctx) {
   const schema = await lerSchema();
   const temZr = existe(schema, 'ORCAMENTO', COLUNA_ZR);
   const colStatus = existe(schema, 'ORCAMENTO', 'STATUS') ? 'STATUS' : 'NULL';
+  const numeroZr = zrDoPedido(p);
 
   // 1. Achar o orçamento deste pedido.
   let atual = null;
@@ -768,7 +784,7 @@ async function reconciliar(tx, p, config, ctx) {
       [p.nrOrcamento, ctx.idEmpresa]
     );
     if (!linha) return { acao: 'removido', nrOrcamento: p.nrOrcamento };
-    if (temZr && linha.zr !== null && linha.zr !== undefined && Number(linha.zr) !== Number(p.pedidoId)) {
+    if (temZr && !pertenceAoPedido(linha.zr, p)) {
       throw new ErroDefinitivo(`O orçamento ${p.nrOrcamento} do ERP pertence a outro pedido do ZapRun (${linha.zr}).`);
     }
     atual = linha;
@@ -778,10 +794,10 @@ async function reconciliar(tx, p, config, ctx) {
       `SELECT NRORCAMENTO, ${colStatus} AS STATUS FROM ORCAMENTO
         WHERE ${COLUNA_ZR} = ? AND IDEMPRESA = ? AND DTORC >= ?
         ORDER BY NRORCAMENTO`,
-      [p.pedidoId, ctx.idEmpresa, new Date(desde.getFullYear(), desde.getMonth(), desde.getDate())]
+      [numeroZr, ctx.idEmpresa, new Date(desde.getFullYear(), desde.getMonth(), desde.getDate())]
     );
     if (linhas.length > 1) {
-      ctx.avisos.push(`${linhas.length} orçamentos com ${COLUNA_ZR}=${p.pedidoId} (copiados no ERP?); usei o ${linhas[0].nrorcamento}.`);
+      ctx.avisos.push(`${linhas.length} orçamentos com ${COLUNA_ZR}=${numeroZr} (copiados no ERP?); usei o ${linhas[0].nrorcamento}.`);
     }
     atual = linhas[0] || null;
   }
@@ -815,7 +831,7 @@ async function reconciliar(tx, p, config, ctx) {
         PONTUACAO: 0,
         IDENDERECO: 0,
         ...cabecalhoVariavel(p, ctx.cdMunicipio),
-        ...(temZr ? { [COLUNA_ZR]: p.pedidoId } : {})
+        ...(temZr ? { [COLUNA_ZR]: numeroZr } : {})
       },
       config.extras && config.extras.ORCAMENTO,
       p.modalidade
@@ -1414,5 +1430,7 @@ module.exports = {
   mensagemDoHistorico,
   valorMudou,
   comoGravarHistorico,
+  zrDoPedido,
+  pertenceAoPedido,
   ErroDefinitivo
 };

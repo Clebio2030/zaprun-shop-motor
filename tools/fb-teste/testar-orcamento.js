@@ -47,7 +47,7 @@ const pedido = (extra = {}) => ({
 
 async function orcamento(nr) {
   const [o] = await executar(
-    `SELECT NRORCAMENTO, STATUS, CDCLIENTE, CDVENDEDOR, VLTOTAL, SUBTOTAL, DESCONTO, PERC_DESCONTO, CDMUNICIPIO, DTORC, HORAORC,
+    `SELECT NRORCAMENTO, STATUS, CDCLIENTE, CDVENDEDOR, VLTOTAL, SUBTOTAL, DESCONTO, PERC_DESCONTO, CDMUNICIPIO, DTORC, HORAORC, ZR_PEDIDO,
             CAST(CLIENTE AS VARCHAR(100) CHARACTER SET OCTETS) AS CLIENTE, TELEFONE,
             CAST(LOCALENTR AS VARCHAR(60) CHARACTER SET OCTETS) AS LOCALENTR, CAST(OBSERVACAO AS VARCHAR(255) CHARACTER SET OCTETS) AS OBS
        FROM ORCAMENTO WHERE NRORCAMENTO = ? AND IDEMPRESA = 1`,
@@ -89,6 +89,7 @@ async function contar() {
   assert.strictEqual(r.cdVendedor, '7');
   let { o, itens } = await orcamento(7301);
   assert.strictEqual(o.status, 0);
+  assert.strictEqual(o.zr_pedido, 12, 'ZR_PEDIDO guarda o número do pedido na Loja, não o pedidoId');
   assert.strictEqual(o.cdvendedor, 7);
   assert.strictEqual(Number(o.subtotal), 67.85);
   assert.strictEqual(Number(o.desconto), 5);
@@ -136,7 +137,7 @@ async function contar() {
 
   // 5. Produto que não existe no ERP: erro definitivo, nada gravado.
   r = await orc.sincronizarPedido(
-    pedido({ pedidoId: 900002, itens: [{ cdproduto: '99999', descricao: 'NAO EXISTE', quantidade: 1, valorUnitario: 1, total: 1, idpreco: null }], frete: null, desconto: 0, subtotal: 1, total: 1 }),
+    pedido({ pedidoId: 900002, numero: 13, itens: [{ cdproduto: '99999', descricao: 'NAO EXISTE', quantidade: 1, valorUnitario: 1, total: 1, idpreco: null }], frete: null, desconto: 0, subtotal: 1, total: 1 }),
     config,
     'gravar'
   );
@@ -158,7 +159,7 @@ async function contar() {
   assert.strictEqual(r.acao, 'travado');
 
   // 8. Cancelado antes de existir: ignorado.
-  r = await orc.sincronizarPedido(pedido({ pedidoId: 900003, cancelado: true }), config, 'gravar');
+  r = await orc.sincronizarPedido(pedido({ pedidoId: 900003, numero: 14, cancelado: true }), config, 'gravar');
   assert.strictEqual(r.acao, 'ignorado');
 
   // 9. Excluído no ERP: removido, não recria.
@@ -170,7 +171,7 @@ async function contar() {
   assert.strictEqual(await contar(), antes);
 
   // 10. Vendedor que não existe: erro com o motivo.
-  r = await orc.sincronizarPedido(pedido({ pedidoId: 900004 }), { ...config, cdVendedorPadrao: '55' }, 'gravar');
+  r = await orc.sincronizarPedido(pedido({ pedidoId: 900004, numero: 15 }), { ...config, cdVendedorPadrao: '55' }, 'gravar');
   console.log('config inválida:', r.acao, r.erro);
   assert.strictEqual(r.acao, 'erro');
   assert.match(r.erro, /vendedor 55/);

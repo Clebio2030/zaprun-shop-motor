@@ -305,8 +305,10 @@ A ligação pedido ↔ orçamento é a coluna **`ORCAMENTO.ZR_PEDIDO`**, criada 
 Motor na primeira consulta em modo Gravar — sem esperar pedido (v1.3.1), para a
 loja conferir a tela de orçamento do Automec antes do primeiro pedido real (`ALTER TABLE ORCAMENTO ADD ZR_PEDIDO
 INTEGER`), depois de conferir que nenhuma procedure/trigger insere em ORCAMENTO
-sem listar colunas. Gravada na mesma transação: se o resultado não chegar ao
-servidor, a próxima consulta acha o orçamento pela coluna e não duplica.
+sem listar colunas. Guarda o **número do pedido na Loja** (v1.3.12; antes
+guardava o `orderId` interno — orçamentos antigos seguem aceitos) na mesma
+transação: se o resultado não chegar ao servidor, a próxima consulta acha o
+orçamento pela coluna e não duplica.
 
 `QTDELIB` e `QTDEPECA` dos itens copiam o Automec da casa (v1.3.1): o
 Motor olha os últimos 200 itens da empresa e, se 80% ou mais têm o valor igual à

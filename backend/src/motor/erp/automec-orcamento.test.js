@@ -83,3 +83,14 @@ test('prazo aprendido da casa vira data a partir da data do orçamento', () => {
   assert.strictEqual(r.TIPOORC, 'O');
   assert.strictEqual(r.DTVALIDADE.getDate(), 30);
 });
+
+test('ZR_PEDIDO usa número da Loja e aceita legado pedidoId na validação', () => {
+  const { zrDoPedido, pertenceAoPedido } = require('./automec-orcamento');
+  const ped = { pedidoId: 359, numero: 56 };
+  assert.strictEqual(zrDoPedido(ped), 56);
+  assert.strictEqual(zrDoPedido({ pedidoId: 359 }), 359);
+  assert.strictEqual(pertenceAoPedido(56, ped), true, 'v1.3.12+ (número da loja)');
+  assert.strictEqual(pertenceAoPedido(359, ped), true, 'legado <= v1.3.11 (pedidoId)');
+  assert.strictEqual(pertenceAoPedido(null, ped), true);
+  assert.strictEqual(pertenceAoPedido(55, ped), false, 'orçamento de outro pedido');
+});

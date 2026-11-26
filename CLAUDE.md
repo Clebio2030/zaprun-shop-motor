@@ -105,6 +105,7 @@ O Motor também **escreve** no Automec: o pedido da Loja vira orçamento
 | Deixar nulo o que o Automec da casa sempre preenche | o orçamento existe no banco e não aparece na tela do Automec (JPR, 23/11). `perfilDaCasa` copia códigos e prazos; teste em `tools/fb-teste/testar-casa.js` |
 | Item com STATUS 'FF' (da Pontual), ou endereço do balcão na retirada | o dono definiu: item EN (entrega) / RM (retirada); retirada sem endereço (`tools/fb-teste/testar-jpr.js`) |
 | Pular número de orçamento por causa de `SAIDAESTOQUE.NRORCAMENTO` | vendas antigas citam números altos: na JB Morais saiu 79123 em vez de 463, e o balcão passou a numerar dali. O número é MAX(NRORCAMENTO)+1 do ORCAMENTO, e nada mais |
+| `ZR_PEDIDO` = id interno do banco do ZapRun (orderId) | o dono não reconhece o orderId. `ZR_PEDIDO` guarda o **número do pedido na Loja** (`p.numero`), que é o que aparece no painel e no chat |
 | Valor fixo da Pontual em QTDELIB/QTDEPECA | o Automec da casa preenche diferente (JPR: QTDELIB = quantidade em 0 de 200 itens). Copie a convenção dos últimos itens |
 | CALC do item = quantidade | o dono definiu (23/11): CALC = VLUNIT, sempre. Não volte a copiar a casa nessa coluna |
 | Orçamento sem linha em `SIS_APPHISTORY` | não aparece na aba Histórico do Automec — quem grava é o programa (`SP_ADDHISTORY`), não gatilho. `EXECUTE PROCEDURE`, nunca `SELECT` (SUSPEND sem RETURNS). Falha no histórico nunca derruba o orçamento (`tools/fb-teste/testar-historico.js`) |
