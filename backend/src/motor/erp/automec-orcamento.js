@@ -805,7 +805,8 @@ async function reconciliar(tx, p, config, ctx) {
         filtro ? [nr, ctx.idEmpresa] : [nr]
       );
       if (m !== null && m !== undefined && Number(m) >= nr) {
-        ctx.avisos.push(`Números ${nr} a ${Number(m)} já aparecem em vendas (SAIDAESTOQUE); usei o ${Number(m) + 1}.`);
+        // Só no log da máquina: é detalhe de tabela do ERP, que a loja não precisa ver no painel.
+        logInfo(`[Pedidos] Números ${nr} a ${Number(m)} já aparecem em vendas (SAIDAESTOQUE); usei o ${Number(m) + 1}.`);
         nr = Number(m) + 1;
       }
     }

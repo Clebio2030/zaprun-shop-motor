@@ -354,6 +354,7 @@ não (parcelas, por exemplo). O relatório leva o mesmo em
 - Retirada vai SEM endereço (o balcão pode não ter um — como o orçamento do
   PDV Web da Pontual); entrega leva o endereço do pedido.
 - STATUS do item: **EN** na entrega, **RM** na retirada. Nunca 'FF'.
+- (v1.3.10: o aviso "já aparecem em vendas" vai só para o log da máquina, não para o painel.)
 - Número de orçamento já citado numa venda (`SAIDAESTOQUE.NRORCAMENTO`) é
   pulado: a JPR tinha venda apontando para o 84478 que o Motor criou.
 
