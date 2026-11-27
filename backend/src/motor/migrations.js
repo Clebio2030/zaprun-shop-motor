@@ -31,6 +31,18 @@ const COLUNAS_OPCIONAIS = [
     coluna: 'MULTCAIXA',
     uso: /\bp\.multcaixa\b/gi,
     nulo: 'CAST(NULL AS DOUBLE PRECISION)'
+  },
+  {
+    tabela: 'PRODUTO',
+    coluna: 'PESOUNIT',
+    uso: /\bp\.pesounit\b/gi,
+    nulo: 'CAST(NULL AS DOUBLE PRECISION)'
+  },
+  {
+    tabela: 'PRODUTO',
+    coluna: 'PESOBRUTO',
+    uso: /\bp\.pesobruto\b/gi,
+    nulo: 'CAST(NULL AS DOUBLE PRECISION)'
   }
 ];
 

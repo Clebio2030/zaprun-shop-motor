@@ -125,7 +125,8 @@ CREATE OR ALTER VIEW ZAPRUN_SHOP(
     CDDEPOSITO,
     DEPOSITO_DESCRICAO,
     SALDO,
-    MULTCAIXA)
+    MULTCAIXA,
+    PESO)
 AS
 SELECT
     p.cdproduto,
@@ -151,7 +152,11 @@ SELECT
     CAST(est.deposito_descricao AS VARCHAR(255) CHARACTER SET OCTETS),
     COALESCE(est.saldo, 0),
     /* Metragem por caixa — ver a nota 6 no topo. */
-    p.multcaixa
+    p.multcaixa,
+    /* Peso de uma unidade em kg (27/11/2026): a loja virtual estima o veículo
+       da entrega por parceiro. Vai no `raw` do produto. PESOUNIT; vazio ou
+       zero, vale o PESOBRUTO. */
+    COALESCE(NULLIF(p.pesounit, 0), p.pesobruto)
 FROM produto p
 
 /* 1. Códigos de barra (1:N) */
