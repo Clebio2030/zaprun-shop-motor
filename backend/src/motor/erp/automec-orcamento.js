@@ -542,10 +542,16 @@ async function validarConfig(config) {
     if (!nomes.empresa) erros.push(`A empresa ${config.idEmpresaErp} não existe na CONFIGURACAO do ERP.`);
   }
   if (existe(schema, 'CLIENTE', 'CLIENTE')) {
-    const porEmpresa = existe(schema, 'CLIENTE', 'IDEMPRESA') ? ' AND IDEMPRESA = ?' : '';
+    // O cadastro de clientes é de todas as empresas: IDEMPRESA é só a loja onde
+    // o cliente foi cadastrado. O CLIENTE BALCAO fica na 1 e as outras usam o
+    // mesmo — NÃO filtre por empresa (até a v1.3.14 a empresa 4 da Zé Grande
+    // ouvia "o cliente 1 não existe"). A da loja só tem preferência no nome.
+    const daLojaPrimeiro = existe(schema, 'CLIENTE', 'IDEMPRESA')
+      ? ' ORDER BY CASE WHEN IDEMPRESA = ? THEN 0 ELSE 1 END'
+      : '';
     nomes.cliente = await nomeDe(
-      `SELECT FIRST 1 CAST(CLIENTE AS VARCHAR(100) CHARACTER SET OCTETS) AS NOME FROM CLIENTE WHERE CDCLIENTE = ?${porEmpresa}`,
-      porEmpresa ? [config.cdClienteErp, config.idEmpresaErp] : [config.cdClienteErp]
+      `SELECT FIRST 1 CAST(CLIENTE AS VARCHAR(100) CHARACTER SET OCTETS) AS NOME FROM CLIENTE WHERE CDCLIENTE = ?${daLojaPrimeiro}`,
+      daLojaPrimeiro ? [config.cdClienteErp, config.idEmpresaErp] : [config.cdClienteErp]
     );
     if (!nomes.cliente) erros.push(`O cliente ${config.cdClienteErp} não existe no ERP.`);
   }
